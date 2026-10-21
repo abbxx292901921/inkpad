@@ -156,9 +156,13 @@ Rules:
 - Diagnose first (logging, overlay) before changing code.
 
 ## Branding
-- `assets/logo.svg` is the source of truth for the mark (four-point sparkle whose
-  lower point is drawn out into a pen nib, coral ink splatter at the tip).
-  `assets/logo-maskable.svg` is the same mark scaled to 82% for platform masks.
+- `assets/logo.svg` is the source of truth for the mark: a silver pen with a
+  four-pointed star (Gemini-style) for fins and a blue thrust flame, drifting
+  over a deep-space background with a sun rising in the lower-left corner.
+  `assets/logo-maskable.svg` is the same scene with the pen scaled to 80% for
+  platform masks.
+- The icon deliberately has NO wordmark: an iOS home screen tile is ~60pt, so
+  text turns to mush. The "INKPAD" wordmark belongs in the app UI, not the icon.
 - `icons/*.png` are generated from those SVGs with headless Chrome:
   `chrome --headless=new --window-size=W,H --screenshot=out.png <svg-with-matching-width-height>`
   (the SVG must carry the target width/height or the capture is cropped).
