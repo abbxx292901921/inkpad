@@ -53,6 +53,7 @@ export function buildToolbar(root, actions) {
       title: t.label,
       onClick: () => actions.onSelectTool(t.id),
     });
+    b.dataset.tool = t.id;
     b.appendChild(icon(t.icon));
     rowTools.appendChild(b);
     toolBtns.set(t.id, b);
@@ -198,6 +199,9 @@ export function buildToolbar(root, actions) {
       for (const [hex, b] of quickBtns) {
         b.setAttribute('aria-pressed', String(hex.toLowerCase() === (state.color ?? '').toLowerCase()));
       }
+      // The quick colour row and the stroke button are context sensitive.
+      quickGroup.style.display = state.showColors === false ? 'none' : '';
+      strokeGroup.style.display = state.showWidths === false ? 'none' : '';
       undoBtn.disabled = !state.canUndo;
       redoBtn.disabled = !state.canRedo;
       fingerBtn.setAttribute('aria-pressed', String(!!state.fingerDrawing));

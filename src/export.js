@@ -33,7 +33,15 @@
 // Node), so every DOM access happens inside a function and is guarded.
 
 import { isTranslucent, renderStroke } from './strokes.js';
+import { isShapeStroke, renderShape } from './shapes.js';
 import { containFit } from './pages.js';
+
+// Shapes are strokes, but they are drawn as a hard-edged path: the ink
+// renderer's midpoint smoothing would round a rectangle's corners.
+function drawStroke(ctx, stroke) {
+  if (isShapeStroke(stroke)) renderShape(ctx, stroke);
+  else renderStroke(ctx, stroke);
+}
 
 // Page units of breathing room kept around the content of an export.
 const EXPORT_PADDING = 16;
@@ -221,7 +229,7 @@ function renderPage(page, { scale = DEFAULT_SCALE, background = '#ffffff', bound
     const scratch = makeCanvas(width, height);
     const sctx = scratch.getContext('2d');
     sctx.setTransform(s, 0, 0, s, tx, ty);
-    for (const st of translucent) renderStroke(sctx, st);
+    for (const st of translucent) drawStroke(sctx, st);
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.globalAlpha = 1;
     ctx.globalCompositeOperation = 'source-over';
@@ -230,7 +238,7 @@ function renderPage(page, { scale = DEFAULT_SCALE, background = '#ffffff', bound
 
   // (c2) the opaque ink, on top of everything
   toPage();
-  for (const st of opaque) renderStroke(ctx, st);
+  for (const st of opaque) drawStroke(ctx, st);
 
   return canvas;
 }

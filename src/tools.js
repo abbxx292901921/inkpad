@@ -59,7 +59,7 @@ export function getWidthRange(id) {
 export function supportsLineStyle(id) {
   const t = registry.get(id);
   if (!t) return false;
-  if (t.kind !== 'ink') return false;
+  if (t.kind !== 'ink' && t.kind !== 'shape') return false;
   return (t.options.opacity ?? 1) >= 1;
 }
 
@@ -88,6 +88,31 @@ registerTool('pencil', {
   // Graphite: constant width, no pressure taper, opaque.
   options: { color: '#3a3a3a', width: 2, opacity: 1, lineStyle: LINE_STYLE_SOLID, pressureTaper: false },
   widthRange: { min: 1, max: 12 },
+});
+
+registerTool('shape', {
+  name: 'Shape',
+  kind: 'shape',
+  icon: 'shapeRect',
+  // A shape IS a stroke: the vertices are its points. `shape` says which
+  // one, `fill` is the Freeform/Boxed mode from the reference.
+  options: {
+    color: '#1b1b1b',
+    width: 3,
+    opacity: 1,
+    lineStyle: LINE_STYLE_SOLID,
+    pressureTaper: false,
+    shape: 'rect',
+    fill: 'freeform',
+  },
+  widthRange: { min: 1, max: 20 },
+});
+
+registerTool('select', {
+  name: 'Select',
+  kind: 'select',
+  icon: 'select',
+  options: {},
 });
 
 registerTool('eraser', {

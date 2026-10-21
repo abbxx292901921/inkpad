@@ -1,0 +1,110 @@
+/* ui/selection.css — the selection + transform overlay.
+   theme.css is owned by another agent, so these styles live here and
+   ui/selection.js links the file in at runtime (no build step).
+   Colours come from the reference screenshots (§5): accent blue #0a84ff. */
+
+.sel-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 4;
+  /* The layer itself never takes a click: only the box and the handles do,
+     so a stroke can still start anywhere else on the page. */
+  pointer-events: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.sel-overlay[hidden] {
+  display: none;
+}
+
+/* --- the box --------------------------------------------------------------- */
+
+.sel-box {
+  position: absolute;
+  border: 1.5px dashed #0a84ff;
+  border-radius: 4px;
+  pointer-events: auto;
+  touch-action: none;
+  cursor: move;
+}
+
+/* --- the handles ----------------------------------------------------------- */
+
+.sel-handle {
+  /* 12px round, solid accent blue with a white ring so it reads on ink. */
+  --sel-handle-size: 12px;
+  position: absolute;
+  width: var(--sel-handle-size);
+  height: var(--sel-handle-size);
+  /* Centred on the point the app gave us. */
+  margin-left: calc(var(--sel-handle-size) / -2);
+  margin-top: calc(var(--sel-handle-size) / -2);
+  border-radius: 50%;
+  background: #0a84ff;
+  border: 2px solid #ffffff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+  pointer-events: auto;
+  touch-action: none;
+  cursor: pointer;
+}
+
+/* The edge midpoints get a quieter handle than the corners. */
+.sel-handle.is-edge {
+  --sel-handle-size: 10px;
+  opacity: 0.85;
+}
+
+.sel-handle:focus-visible {
+  outline: 2px solid #0a84ff;
+  outline-offset: 2px;
+}
+
+/* --- the rotation handle --------------------------------------------------- */
+
+.sel-rot {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  /* Sits on the right edge midpoint. */
+  transform: translateY(-50%);
+  /* Only the dot is grabbable: the container starts exactly where the right
+     edge handle sits, and a transparent box there would steal its clicks. */
+  pointer-events: none;
+  touch-action: none;
+  cursor: grab;
+}
+
+.sel-rot-line {
+  width: 22px;
+  height: 1.5px;
+  background: #0a84ff;
+}
+
+.sel-rot-dot {
+  position: relative;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #3a3a3c;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+  pointer-events: auto;
+}
+
+/* The dot is tiny; give it a fat invisible hit area so a finger can grab
+   it without landing on the 1.5px line. */
+.sel-rot-dot::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 24px;
+  height: 24px;
+  transform: translate(-50%, -50%);
+}
+
+.sel-rot:focus-visible {
+  outline: 2px solid #0a84ff;
+  outline-offset: 4px;
+}

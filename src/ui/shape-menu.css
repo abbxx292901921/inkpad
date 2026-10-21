@@ -1,0 +1,102 @@
+/* shape-menu.css — the shape submenu card.
+
+   theme.css is owned by another agent, so the card styles ship here and are
+   linked in at runtime by src/ui/shape-menu.js (same pattern as
+   src/ui/library.css). The tokens come from theme.css, with literal fallbacks
+   so the card still looks right if it is opened on its own. */
+
+.shape-menu {
+  position: fixed;
+  z-index: 30;
+  padding: 10px;
+  background: #fff;
+  border-radius: 14px;
+  box-shadow: 0 10px 34px rgba(0, 0, 0, 0.2);
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.shape-menu[hidden] {
+  display: none;
+}
+
+/* --- the five shape kinds -------------------------------------------------- */
+
+.shape-menu-shapes {
+  display: flex;
+  gap: 4px;
+}
+
+.shape-btn {
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--chrome, #4a4a4a);
+  cursor: pointer;
+}
+
+.shape-btn:hover {
+  background: #f2f2f7;
+}
+
+.shape-btn.is-active,
+.shape-btn[aria-pressed="true"] {
+  color: var(--accent, #0a84ff);
+  background: var(--accent-soft, #e8f2ff);
+  border-color: var(--accent, #0a84ff);
+}
+
+/* --- freeform / boxed ------------------------------------------------------ */
+
+.shape-menu-seg {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--hairline, #e5e5ea);
+}
+
+.shape-seg {
+  flex: 1 1 0;
+  min-width: 0;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 10px;
+  border: 1px solid var(--hairline, #e5e5ea);
+  border-radius: 10px;
+  background: #fff;
+  color: var(--chrome, #4a4a4a);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.shape-seg .ico {
+  flex: none;
+}
+
+/* The selected segment gets the blue border and the pale blue fill, exactly
+   like the Notability screenshot. */
+.shape-seg.is-active,
+.shape-seg[aria-pressed="true"] {
+  color: var(--accent, #0a84ff);
+  border-color: var(--accent, #0a84ff);
+  background: var(--accent-soft, #e8f2ff);
+}
+
+.shape-btn:focus-visible,
+.shape-seg:focus-visible {
+  outline: 2px solid var(--accent, #0a84ff);
+  outline-offset: 1px;
+}

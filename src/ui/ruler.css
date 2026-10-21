@@ -1,0 +1,104 @@
+/* ui/ruler.css — the Notability-style ruler and the rotation dial.
+
+   theme.css is owned by another agent, so these styles live here and
+   ui/ruler.js / ui/rotation-dial.js link the file in at runtime (no build
+   step). Colours come from the theme's custom properties; the extra tints
+   the reference needs (the ruler band grey, the dial's tick greys) are
+   declared once, here. */
+
+/* --- the ruler ------------------------------------------------------------ */
+
+.ruler-layer {
+  position: fixed;
+  inset: 0;
+  /* Below the toolbar (5) and the pen ring (4), above the page (0). */
+  z-index: 3;
+  /* The whole layer is click-through so strokes can start anywhere. */
+  pointer-events: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.ruler-layer[hidden] {
+  display: none;
+}
+
+.ruler {
+  --ruler-bg: #f2f2f7;
+  --ruler-tick: #c7c7cc;
+  --ruler-tick-major: #8e8e93;
+  --ruler-text: #4a4a4a;
+  position: absolute;
+  background: var(--ruler-bg);
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.12);
+}
+
+.ruler-h {
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 28px;
+}
+
+.ruler-v {
+  top: 0;
+  left: 0;
+  bottom: 0;
+  width: 28px;
+  /* The vertical band is added last in the DOM, so it covers the corner
+     square of the horizontal band. */
+  z-index: 1;
+}
+
+.ruler-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* --- the rotation dial ---------------------------------------------------- */
+
+.dial {
+  --dial-tick: #c7c7cc;
+  --dial-tick-major: #8e8e93;
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 12;
+  width: 110px;
+  height: 110px;
+  border-radius: 50%;
+  background: var(--paper);
+  box-shadow: var(--card-shadow);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* The dial is dragged, so the browser must not claim the gesture. */
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.dial[hidden] {
+  display: none;
+}
+
+.dial-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.dial-angle {
+  position: relative;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  pointer-events: none;
+}

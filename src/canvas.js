@@ -48,6 +48,14 @@ import {
 import { getCurrentTool } from './tools.js';
 import { defaultInput } from './input.js';
 import { containFit } from './pages.js';
+import { isShapeStroke, renderShape, createShapeStroke } from './shapes.js';
+
+// Shapes are strokes, but they are drawn as a hard-edged path: the ink
+// renderer's midpoint smoothing would round a rectangle's corners.
+function drawStroke(ctx, stroke) {
+  if (isShapeStroke(stroke)) renderShape(ctx, stroke);
+  else renderStroke(ctx, stroke);
+}
 
 const PEN_ERASER_BIT = 32; // pen eraser end (Pointer Events spec)
 const PEN_BARREL_BIT = 2; // pen barrel / side button
@@ -139,7 +147,7 @@ export function createDrawingSurface(canvas, viewport, hooks) {
     clearDevicePixels();
     drawLayers();
     applyTransform(ctx, viewport);
-    for (const s of hooks.getStrokes()) renderStroke(ctx, s);
+    for (const s of hooks.getStrokes()) drawStroke(ctx, s);
     for (const entry of active.values()) {
       if (!entry.stroke || entry.erasing) continue;
       entry.renderedPieces = 0;
@@ -371,8 +379,23 @@ export function createDrawingSurface(canvas, viewport, hooks) {
 
     const tool = getCurrentTool();
     const erasing = tool.kind === 'eraser' || isPenEraseGesture(e);
+    const selecting = tool.kind === 'select' && !erasing;
+    const shaping = tool.kind === 'shape' && !erasing;
+
+    // A shape or a lasso gesture collects a path instead of ink.
+    const shapeDraft = shaping
+      ? {
+          kind: tool.options.shape ?? 'rect',
+          fill: tool.options.fill === 'boxed',
+          x0: 0,
+          y0: 0,
+          x1: 0,
+          y1: 0,
+        }
+      : null;
+
     const entry = {
-      stroke: erasing
+      stroke: erasing || selecting || shaping
         ? null
         : createStroke({
             tool: tool.id,
@@ -384,6 +407,8 @@ export function createDrawingSurface(canvas, viewport, hooks) {
             pressureTaper: tool.options.pressureTaper !== false,
           }),
       erasing,
+      selecting,
+      shape: shapeDraft,
       path: [],
       renderedPieces: 0,
       coalescedTotal: 0,
@@ -395,14 +420,23 @@ export function createDrawingSurface(canvas, viewport, hooks) {
     entry.coalescedTotal += list.length;
     for (const ce of list) {
       const pt = toPagePoint(ce);
-      if (erasing) entry.path.push({ x: pt.x, y: pt.y });
-      else addPoint(entry.stroke, pt.x, pt.y, pt.pressure);
+      if (erasing || selecting) entry.path.push({ x: pt.x, y: pt.y });
+      else if (shaping) {
+        entry.shape.x0 = pt.x;
+        entry.shape.y0 = pt.y;
+        entry.shape.x1 = pt.x;
+        entry.shape.y1 = pt.y;
+      } else addPoint(entry.stroke, pt.x, pt.y, pt.pressure);
     }
-    if (!erasing) {
+    if (!erasing && !selecting && !shaping) {
       applyTransform(ctx, viewport);
       paintNewPieces(ctx, entry.stroke, entry);
     }
-    reportDebug(e, erasing ? 'down(erase)' : 'down', list.length);
+    reportDebug(
+      e,
+      erasing ? 'down(erase)' : selecting ? 'down(select)' : shaping ? 'down(shape)' : 'down',
+      list.length,
+    );
   }
 
   function onPointerMove(e) {
@@ -458,14 +492,55 @@ export function createDrawingSurface(canvas, viewport, hooks) {
     entry.coalescedTotal += list.length;
     for (const ce of list) {
       const pt = toPagePoint(ce);
-      if (entry.erasing) entry.path.push({ x: pt.x, y: pt.y });
-      else addPoint(entry.stroke, pt.x, pt.y, pt.pressure);
+      if (entry.erasing || entry.selecting) entry.path.push({ x: pt.x, y: pt.y });
+      else if (entry.shape) {
+        entry.shape.x1 = pt.x;
+        entry.shape.y1 = pt.y;
+        entry.shape.snap = !e.shiftKey;
+      } else addPoint(entry.stroke, pt.x, pt.y, pt.pressure);
     }
-    if (!entry.erasing) {
+    if (entry.shape) {
+      // Redraw the scene and lay the shape preview on top.
+      repaintAll();
+      applyTransform(ctx, viewport);
+      const tool = getCurrentTool();
+      const draft = createShapeStroke({
+        kind: entry.shape.kind,
+        x0: entry.shape.x0,
+        y0: entry.shape.y0,
+        x1: entry.shape.x1,
+        y1: entry.shape.y1,
+        color: tool.options.color,
+        width: tool.options.width,
+        opacity: tool.options.opacity ?? 1,
+        lineStyle: tool.options.lineStyle ?? 'solid',
+        fill: entry.shape.fill,
+        snap: entry.shape.snap !== false,
+      });
+      renderShape(ctx, draft);
+    } else if (entry.selecting) {
+      // The lasso trail, so the gesture is visible while it is happening.
+      if (entry.path.length > 1) {
+        applyTransform(ctx, viewport);
+        ctx.save();
+        ctx.setLineDash([5, 4]);
+        ctx.strokeStyle = '#0a84ff';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(entry.path[0].x, entry.path[0].y);
+        for (const p of entry.path) ctx.lineTo(p.x, p.y);
+        ctx.stroke();
+        ctx.restore();
+      }
+    } else if (!entry.erasing) {
       applyTransform(ctx, viewport);
       paintNewPieces(ctx, entry.stroke, entry);
     }
-    reportDebug(e, entry.erasing ? 'move(erase)' : 'move', list.length);
+    reportDebug(
+      e,
+      entry.erasing ? 'move(erase)' : entry.selecting ? 'move(select)' : entry.shape ? 'move(shape)' : 'move',
+      list.length,
+    );
   }
 
   // Shared finish path for pointerup, pointercancel, lostpointercapture.
@@ -500,6 +575,40 @@ export function createDrawingSurface(canvas, viewport, hooks) {
     if (entry.erasing) {
       reportDebug(e, `${kind} (erase path, ${entry.path.length} pts)`, 0);
       hooks.erasePath(entry.path);
+      return;
+    }
+    if (entry.selecting) {
+      reportDebug(e, `${kind} (lasso, ${entry.path.length} pts)`, 0);
+      if (hooks.onLasso) hooks.onLasso(entry.path);
+      return;
+    }
+    if (entry.shape) {
+      // Commit the shape as an ordinary stroke, so undo, persistence and
+      // export all work on it for free.
+      const tool = getCurrentTool();
+      const shape = createShapeStroke({
+        kind: entry.shape.kind,
+        x0: entry.shape.x0,
+        y0: entry.shape.y0,
+        x1: entry.shape.x1,
+        y1: entry.shape.y1,
+        color: tool.options.color,
+        width: tool.options.width,
+        opacity: tool.options.opacity ?? 1,
+        lineStyle: tool.options.lineStyle ?? 'solid',
+        pointerType: e.pointerType,
+        fill: entry.shape.fill,
+        snap: entry.shape.snap !== false,
+      });
+      // A tap without a drag is not a shape.
+      const moved =
+        Math.abs(entry.shape.x1 - entry.shape.x0) + Math.abs(entry.shape.y1 - entry.shape.y0);
+      if (moved < 3) {
+        repaintAll();
+        return;
+      }
+      reportDebug(e, `${kind} (shape ${shape.shape}, ${shape.points.length} pts)`, 0);
+      hooks.commitStroke(shape);
       return;
     }
     applyTransform(ctx, viewport);

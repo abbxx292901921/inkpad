@@ -5,7 +5,9 @@ A static, offline-capable Progressive Web App for handwritten notes
 no backend, no dependencies, no tracking.
 
 > Status: the Notability-style editor UI is in — floating icon toolbar,
-> expandable tool island, colour card, stroke card, and file import.
+> expandable tool island, colour card, stroke card, shapes, lasso + transform
+> box, ruler. Notes persist in IndexedDB, the library screen works, PDFs and
+> images import, and the app runs offline.
 > iPad input core done: synchronous drawing, palm rejection, squeeze-to-erase,
 > Pencil hover ring.
 
@@ -22,7 +24,7 @@ ES modules require http/https).
 
 ## Deploy to GitHub Pages
 
-The app is a static folder — no build step, no backend, no dependencies.
+The app is a static folder — no build step, no backend.
 
 1. Push `main` to the repo (the `Deploy to GitHub Pages` workflow publishes it).
 2. Settings → Pages → Build and deployment → Source: **GitHub Actions**.
@@ -34,25 +36,49 @@ under a subpath like `/inkpad/`.
 
 ## Use
 
-- **Toolbar** (top centre, a floating pill): Pen / Marker / Pencil / Eraser,
-  an import button, and a chevron that expands the island to reveal the
-  options row. The pill on the right has Undo / Redo, the finger-drawing
-  toggle and a "more" menu.
+- **Toolbar** (top centre, a floating pill): Pen / Marker / Pencil / Shapes /
+  Select / Eraser, an import button, and a chevron that expands the island to
+  reveal the options row. The pill on the right has Undo / Redo, the
+  finger-drawing toggle and a "more" menu.
 - **Colours**: tap `+` in the options row for the full colour card (16
   swatches, a colour wheel for custom colours, and a second palette page
   that collects your custom picks).
 - **Stroke**: tap the line button in the options row for the thickness slider
   and the four line styles (solid / hairline / dashed / dotted).
-- **Import a file**: tap `+` in the tool row and choose an image (a photo of
-  your homework works). It becomes the page background and you write on top
-  of it. PDFs need the pdf.js library, which is not vendored yet.
-- The eraser deletes whole strokes it touches; everything is undoable.
+- **Shapes**: tap the shape button for the picker — line, rectangle, ellipse,
+  triangle, arrow — plus the Freeform/Boxed fill mode. Hold **Shift** while
+  dragging to disable the 45°/square snapping.
+- **Select**: tap the select button and draw a lasso around your ink. A blue
+  dashed box with corner handles and a rotation handle appears; drag the
+  handles to scale or rotate, drag the box to move, and Cmd/Ctrl+A to select
+  everything.
+- **Import a file**: tap `+` in the tool row. An image (a photo of your
+  homework) becomes the page background and you write on top of it. A PDF
+  becomes one page per PDF page, each with the rasterised page as its
+  background.
+- **Library**: the grid button at the top left opens the notes screen —
+  folders, search, recent notes with thumbnails.
+- The more menu has: clear page, add a blank page, reset the view,
+  print / save as PDF, download as PNG, the ruler, and the input settings.
+- Two-finger pinch zooms and pans; ctrl+wheel does the same on a trackpad.
 - The Pencil needs no pairing. The moment any Pencil event is seen, fingers
   stop drawing so you can rest your hand on the screen; tap the
   finger-drawing button if you *want* fingers to draw as well. The choice is
   remembered.
 - Press `D` for the debug overlay; `__inkpad` in the console exposes
-  `{ note, page, strokes, viewport, surface, history, palettes }`.
+  `{ note, page, strokes, selected, viewport, surface, history, palettes }`.
+
+## Offline
+
+A service worker precaches the whole app, so it opens with no network. The
+precache list is generated from the repo:
+
+```bash
+node tools/gen-precache.mjs
+```
+
+Run it after adding a file under `src/`, `assets/`, `icons/` or `vendor/`.
+Bump `CACHE_NAME` in `sw.js` on every deploy, or the old precache is reused.
 
 ## Add to Home Screen (iPad)
 

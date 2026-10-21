@@ -126,6 +126,15 @@ export const ICONS = {
   // Horizontal "freeform / boxed" glyphs used by the shape fill-mode control.
   freeform: { paths: [P('M3 14 C6 7 10 18 13 11 C15.5 6 18 12 21 8')] },
   boxed: { paths: [P('M4 6 L20 6 L20 18 L4 18 Z', )], dash: '3 2.5' },
+
+  // --- shapes (the shape submenu) ---
+  // One glyph per shape kind. Same 24x24 grid, same stroke conventions, so
+  // they tint with the toolbar colour like every other icon.
+  shapeLine: { paths: [P('M4.5 19.5 L19.5 4.5')] },
+  shapeRect: { paths: [P('M4 6 L20 6 L20 18 L4 18 Z')] },
+  shapeEllipse: { paths: [P('M19 12 a7 7 0 1 0 -14 0 a7 7 0 1 0 14 0')] },
+  shapeTriangle: { paths: [P('M12 4.5 L20.5 19 L3.5 19 Z')] },
+  shapeArrow: { paths: [P('M4.5 19.5 L18.5 5.5'), P('M11 5.5 L18.5 5.5 L18.5 13')] },
 };
 
 const NS = 'http://www.w3.org/2000/svg';

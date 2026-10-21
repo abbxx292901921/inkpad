@@ -41,6 +41,19 @@ import { rasterizePdf } from './pdf.js';
 import { createWorkspace } from './workspace.js';
 import { downloadNoteAsPng, printNote } from './export.js';
 import { registerServiceWorker } from './sw-register.js';
+import { buildShapeMenu } from './ui/shape-menu.js';
+import { buildSelection } from './ui/selection.js';
+import { buildRuler } from './ui/ruler.js';
+import { buildRotationDial } from './ui/rotation-dial.js';
+import {
+  boundsOf,
+  translateStrokes,
+  scaleStrokes,
+  rotateStrokes,
+  handlePositions,
+  strokesInPolygon,
+} from './transform.js';
+import { snapshotStrokes, restoreStrokes, transformEntry } from './strokes.js';
 
 const canvas = document.getElementById('page');
 const debugEl = document.getElementById('debug');
@@ -149,6 +162,19 @@ const surface = createDrawingSurface(canvas, viewport, {
   onPenHover,
   onViewportChange: () => {
     zoomPct = Math.round(viewport.zoom * 100);
+    if (rulerVisible) ruler.update();
+  },
+  onLasso: (path) => {
+    const page = workspace.page;
+    if (!page) return;
+    if (path.length < 3) {
+      // A tap clears the selection.
+      selected = [];
+      syncSelection();
+      return;
+    }
+    selected = strokesInPolygon(page.strokes, path);
+    syncSelection();
   },
   debug: (text) => {
     debugEl.textContent = text;
@@ -169,7 +195,6 @@ function openOnly(popover) {
     if (p !== popover) p.close();
   }
 }
-
 const palette = buildPalette({
   onSelect: (hex) => {
     setToolOptions(getCurrentTool().id, { color: hex });
@@ -292,6 +317,20 @@ function buildMoreMenu() {
 
   morePopover.el.appendChild(el('div', 'menu-head', 'Input'));
 
+  const rulerItem = el('button', 'menu-item');
+  rulerItem.type = 'button';
+  rulerItem.appendChild(el('span', 'menu-label', 'Ruler'));
+  const rulerState = el('span', 'menu-value');
+  rulerItem.appendChild(rulerState);
+  rulerItem.addEventListener('click', () => {
+    rulerVisible = !rulerVisible;
+    ruler.setVisible(rulerVisible);
+    if (rulerVisible) ruler.update();
+    buildMoreMenu();
+  });
+  morePopover.el.appendChild(rulerItem);
+  rulerState.textContent = rulerVisible ? 'On' : 'Off';
+
   const fingerItem = el('button', 'menu-item');
   fingerItem.type = 'button';
   fingerItem.appendChild(el('span', 'menu-label', 'Finger drawing'));
@@ -413,10 +452,18 @@ const toolbar = buildToolbar(toolbarEl, {
     { id: 'pen', label: 'Pen', icon: 'pen' },
     { id: 'marker', label: 'Marker', icon: 'marker' },
     { id: 'pencil', label: 'Pencil', icon: 'pencil' },
+    { id: 'shape', label: 'Shapes', icon: 'shapeRect' },
+    { id: 'select', label: 'Select', icon: 'select' },
     { id: 'eraser', label: 'Eraser', icon: 'eraser' },
   ],
   quickColors: QUICK_COLORS,
   onSelectTool: (id) => {
+    if (id === 'shape') {
+      // The shape button opens the shape picker, like the reference.
+      openShapeMenu(toolbarEl.querySelector('[data-tool="shape"]') || toolbarEl);
+      return;
+    }
+    if (id !== 'select') clearSelection();
     setCurrentTool(id);
     syncUI();
   },
@@ -490,6 +537,170 @@ const toolbar = buildToolbar(toolbarEl, {
   },
 });
 
+// --- selection + transform -------------------------------------------------
+// `selected` is the subset of the current page's strokes that the selection
+// box is acting on.
+let selected = [];
+let transformBefore = null; // point snapshot taken when a gesture starts
+let transformStrokes = null;
+let transformTimer = 0;
+let rotateLast = null;
+let rotateStart = null;
+
+// The transforms mutate the strokes in place, so a gesture has to be
+// bracketed by a snapshot for undo to work. The overlay reports incremental
+// movement with no start/end event, so the gesture is closed by a short
+// quiet period.
+function beginTransform() {
+  if (!transformBefore) {
+    transformStrokes = [...selected];
+    transformBefore = snapshotStrokes(transformStrokes);
+  }
+  clearTimeout(transformTimer);
+  transformTimer = setTimeout(() => {
+    if (transformBefore && transformStrokes) {
+      const after = snapshotStrokes(transformStrokes);
+      history.commit(transformEntry(transformStrokes, transformBefore, after));
+      workspace.markDirty();
+    }
+    transformBefore = null;
+    transformStrokes = null;
+  }, 500);
+}
+
+const selection = buildSelection({
+  getViewport: () => viewport,
+  getCanvasRect: () => canvas.getBoundingClientRect(),
+  showEdgeHandles: false,
+  onMove: ({ dx, dy }) => {
+    if (selected.length === 0) return;
+    beginTransform();
+    translateStrokes(selected, dx / viewport.zoom, dy / viewport.zoom);
+    surface.redraw();
+    syncSelection();
+  },
+  onScale: (handle, { dx, dy }) => {
+    if (selected.length === 0) return;
+    beginTransform();
+    const b = boundsOf(selected);
+    if (!b) return;
+    const ux = dx / viewport.zoom;
+    const uy = dy / viewport.zoom;
+    const w = b.maxX - b.minX;
+    const h = b.maxY - b.minY;
+    // How far each edge moves: +1 means the right/bottom edge follows the
+    // pointer, -1 means the left/top edge does.
+    const DX = { tl: -1, l: -1, bl: -1, t: 0, b: 0, r: 1, tr: 1, br: 1 };
+    const DY = { tl: -1, t: -1, tr: -1, l: 0, r: 0, bl: 1, b: 1, br: 1 };
+    const sx = w > 0 ? (w + DX[handle] * ux) / w : 1;
+    const sy = h > 0 ? (h + DY[handle] * uy) / h : 1;
+    // The opposite corner/edge stays put.
+    const anchor = {
+      tl: { x: b.maxX, y: b.maxY },
+      t: { x: (b.minX + b.maxX) / 2, y: b.maxY },
+      tr: { x: b.minX, y: b.maxY },
+      r: { x: b.minX, y: (b.minY + b.maxY) / 2 },
+      br: { x: b.minX, y: b.minY },
+      b: { x: (b.minX + b.maxX) / 2, y: b.minY },
+      bl: { x: b.maxX, y: b.minY },
+      l: { x: b.maxX, y: (b.minY + b.maxY) / 2 },
+    }[handle];
+    scaleStrokes(selected, anchor.x, anchor.y, sx, sy);
+    surface.redraw();
+    syncSelection();
+  },
+  onRotate: ({ x, y, startX, startY }) => {
+    if (selected.length === 0) return;
+    beginTransform();
+    const b = boundsOf(selected);
+    if (!b) return;
+    if (rotateStart !== startX) {
+      rotateLast = null;
+      rotateStart = startX;
+    }
+    const cx = (b.minX + b.maxX) / 2;
+    const cy = (b.minY + b.maxY) / 2;
+    const c = pageToScreen(cx, cy, viewport);
+    const a1 = Math.atan2(y - c.y, x - c.x);
+    if (rotateLast !== null) {
+      rotateStrokes(selected, cx, cy, a1 - rotateLast);
+      surface.redraw();
+      syncSelection();
+    }
+    rotateLast = a1;
+    const deg = ((a1 * 180) / Math.PI + 450) % 360;
+    dial.show(c.x, c.y);
+    dial.setAngle(deg);
+  },
+  onDeselect: () => {
+    selected = [];
+    syncSelection();
+  },
+  onSelectAll: () => {
+    const page = workspace.page;
+    if (!page) return;
+    selected = [...page.strokes];
+    syncSelection();
+  },
+});
+document.body.appendChild(selection.element);
+
+// The rotation dial, shown while the selection is being rotated.
+const dial = buildRotationDial({
+  onChange: (deg) => {
+    if (selected.length === 0) return;
+    const b = boundsOf(selected);
+    if (!b) return;
+    const cx = (b.minX + b.maxX) / 2;
+    const cy = (b.minY + b.maxY) / 2;
+    rotateStrokes(selected, cx, cy, (deg * Math.PI) / 180);
+    surface.redraw();
+    syncSelection();
+  },
+});
+document.body.appendChild(dial.element);
+
+// The ruler, which follows the viewport.
+const ruler = buildRuler({ getViewport: () => viewport });
+document.body.appendChild(ruler.element);
+let rulerVisible = false;
+
+function syncSelection() {
+  const b = selected.length > 0 ? boundsOf(selected) : null;
+  selection.update({ bounds: b, visible: Boolean(b) });
+}
+
+function clearSelection() {
+  if (selected.length === 0) return;
+  selected = [];
+  syncSelection();
+}
+
+// --- the shape menu --------------------------------------------------------
+const shapeMenu = buildShapeMenu({
+  onSelectShape: (kind) => {
+    setToolOptions('shape', { shape: kind });
+    setCurrentTool('shape');
+    shapeMenu.close();
+    syncUI();
+  },
+  onSelectFill: (fill) => {
+    setToolOptions('shape', { fill });
+    syncUI();
+  },
+});
+document.body.appendChild(shapeMenu.element);
+
+function openShapeMenu(anchor) {
+  const tool = getCurrentTool();
+  shapeMenu.update({
+    shape: tool.options.shape ?? 'rect',
+    fill: tool.options.fill ?? 'freeform',
+  });
+  for (const p of ALL_POPOVERS) p.close();
+  shapeMenu.open(anchor);
+}
+
 // --- library screen --------------------------------------------------------
 const library = buildLibrary(libraryEl, {
   onNewNote: () => {
@@ -540,12 +751,15 @@ const library = buildLibrary(libraryEl, {
 // --- state sync ------------------------------------------------------------
 function strokeValue() {
   const tool = getCurrentTool();
-  return tool.kind === 'eraser' ? tool.options.radius : tool.options.width;
+  if (tool.kind === 'eraser') return tool.options.radius;
+  if (tool.kind === 'select') return 3;
+  return tool.options.width;
 }
 
 function strokeRange() {
   const tool = getCurrentTool();
   if (tool.kind === 'eraser') return { min: 4, max: 40 };
+  if (tool.kind === 'select') return { min: 1, max: 20 };
   return getWidthRange(tool.id);
 }
 
@@ -572,12 +786,15 @@ function syncUI() {
     fingerDrawing: fingerDrawingEnabled(),
     pageIndex: workspace.pageIndex,
     pageCount: workspace.pages.length,
+    showColors: tool.kind === 'ink' || tool.kind === 'shape',
+    showWidths: tool.kind !== 'select',
   });
   syncStrokePanel();
   if (palettePopover.isOpen()) {
     palette.update({ color: colorForTool(), palettes, paletteIndex });
   }
-  canvas.style.cursor = tool.id === 'eraser' ? 'pointer' : 'crosshair';
+  canvas.style.cursor =
+    tool.id === 'eraser' ? 'pointer' : tool.id === 'select' ? 'default' : 'crosshair';
 }
 
 // Palm rejection arms itself the moment a pen is seen, so the toolbar
@@ -671,6 +888,9 @@ registerServiceWorker({
 window.__inkpad = {
   get note() {
     return workspace.current;
+  },
+  get selected() {
+    return selected;
   },
   get page() {
     return workspace.page;

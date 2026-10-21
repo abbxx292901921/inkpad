@@ -2,45 +2,81 @@
 
 ## What this is
 Inkpad: a static, offline-capable PWA for handwritten notes (Notability-style).
-Vanilla HTML/CSS/JS (ES modules), no build step, no backend, no dependencies.
+Vanilla HTML/CSS/JS (ES modules), no build step, no backend.
 Runs as a static folder (GitHub Pages compatible).
 
-## Architecture (phase C1)
-- `index.html` — app shell: `<canvas id="page">`, toolbar container, file
-  input, toast, debug overlay, pen ring, module entry.
-- `theme.css` — the Notability-style design system: floating pills, the
-  expandable tool island, popover cards, colour/line-style controls. Only the
-  pills take pointer events; the full-width container stays click-through so
-  strokes can start anywhere. Debug overlay and pen ring are
-  `pointer-events: none` always.
-- `src/app.js` — owns the document (note -> pages), the undo/redo history,
-  the popovers, the file importer and the toolbar state.
+## Dependencies (the rule)
+**Permissive-licensed code may be VENDORED.** The rules that actually matter:
+- **No build step.** The repo IS the artifact: `git push` deploys it. No npm
+  install, no bundler, no node_modules in git.
+- **No runtime network calls.** Nothing is fetched from a CDN at runtime. The
+  app works with the network off, and no key or request ever leaves the device
+  except to the AI provider the user configures.
+- **Vendored code must be permissive** (MIT / Apache-2.0 / BSD / ISC). No
+  copyleft, no source-available licences. See design/oss-references.md for the
+  licence blockers — tldraw's custom licence in particular forbids production
+  use without a paid key.
+- Vendored code keeps its own LICENSE file next to it.
+
+This replaced an earlier blanket "no dependencies" rule, which was over-strict:
+it cost us PDF import (pdf.js) for no benefit. The build-step and
+network rules are the ones worth protecting.
+
+Currently vendored: `vendor/pdfjs/` (pdf.js 6.4.299, Apache-2.0) — the
+ESM build, the worker, the CMaps, the standard fonts and the WASM decoders.
+Regenerate the service worker's precache list after adding a file:
+`node tools/gen-precache.mjs`.
+
+## Architecture
+- `index.html` — app shell: the editor section (canvas + toolbar) and the
+  library section, the file input, the toast, the debug overlay, the pen ring.
+- `theme.css` — the design system: floating pills, the expandable tool island,
+  popover cards, colour/line-style controls. Only the pills take pointer
+  events; the full-width container stays click-through so strokes can start
+  anywhere. Debug overlay and pen ring are `pointer-events: none` always.
+- `src/app.js` — wires everything: the toolbar, the popovers, the file
+  importer, the selection overlay, the screens. It does NOT own the document.
+- `src/workspace.js` — the document store: which notes exist, which one is
+  open, autosave, thumbnails. Owns the persistence policy.
+- `src/storage.js` — IndexedDB. Notes, pages, layers (blobs stored natively),
+  strokes, folders, settings. Layer object URLs are regenerated on load.
 - `src/canvas.js` — Pointer Events handling + SYNCHRONOUS incremental drawing.
   Ink tools paint inside the pointermove handler; the eraser collects a path
-  and calls `erasePath()`.
+  and calls `erasePath()`; the shape tool draws a preview; the select tool
+  collects a lasso path.
 - `src/strokes.js` — stroke data model (vector) + render helpers + undo/redo
-  history + eraser hit-testing.
-- `src/tools.js` — tool registry: pen, marker, pencil, eraser. Per-tool
-  options (`{ color, width, opacity, lineStyle, pressureTaper }` for ink,
-  `{ radius }` for eraser). `supportsLineStyle(id)` is false for the
-  translucent marker.
+  history + eraser hit-testing + transform snapshots.
+- `src/shapes.js` — shape geometry. A shape IS a stroke (its points are the
+  vertices), so undo, persistence, export and hit-testing work on it for free.
+- `src/transform.js` — bounds, move/scale/rotate maths for the selection.
+- `src/tools.js` — tool registry: pen, marker, pencil, shape, select, eraser.
+  Per-tool options (`{ color, width, opacity, lineStyle, pressureTaper }` for
+  ink, `{ shape, fill }` for shapes, `{ radius }` for the eraser).
+  `supportsLineStyle(id)` is false for the translucent marker.
 - `src/pages.js` — the document model. A note owns pages; a page owns
   `layers` (imported files, drawn UNDER the ink) and `strokes` (the ink).
+- `src/pdf.js` — PDF import via the vendored pdf.js. Each PDF page is
+  rasterised to a PNG and becomes a page of the note.
+- `src/export.js` — PNG export and the print view (Save as PDF).
 - `src/input.js` — pointer arbitration (pen vs finger). Owns the palm-rejection
   policy: `createInputPolicy()` for an isolated instance, `defaultInput` for the
   app. Choice persisted in `localStorage` (`inkpad.input.v1`).
+- `src/sw-register.js` — service worker registration.
 - `src/ui/` — the UI layer. `icons.js` (inline SVG icon set), `popover.js`
   (floating panel primitive + colour wheel), `toolbar.js` (the pill + island),
-  `palette.js` (the "Colors" card), `stroke-panel.js` (the "Stroke" card).
+  `palette.js` (the "Colors" card), `stroke-panel.js` (the "Stroke" card),
+  `shape-menu.js` (the shape picker), `selection.js` (the transform box),
+  `library.js` (the notes screen), `ruler.js` + `rotation-dial.js`.
+  UI-only CSS lives beside its module and is injected at runtime — there is no
+  bundler to bundle it.
 - `src/coord.js` — the ONLY screen<->page conversion. Nothing else touches zoom/pan/dpr.
+- `sw.js` — the service worker (classic script, at the repo root).
+- `tools/gen-precache.mjs` — regenerates the service worker's precache list.
 - `design/notability-ui-spec.md` — the Notability UI rebuild spec, transcribed
   from the user's screenshots. Source of truth for the toolbar/palette/library
   work.
 - `design/oss-references.md` — survey of open-source reference projects with
   their licences, and which ones are off limits.
-
-Planned (later steps): `lasso.js`, `storage.js` (IndexedDB), `config.js`,
-`markdown.js`, and `src/ai/` (see "AI providers" below).
 
 ## Document model
 - Note = `{ id, title, folderId, createdAt, updatedAt, pages[] }`
@@ -85,8 +121,18 @@ Services; use a normal API key from AI Studio instead.
 One page-coordinate space. `screenToPage()` / `pageToScreen()` in `src/coord.js`
 convert between CSS pixels (relative to canvas top-left) and page coords using
 `viewport = { zoom, panX, panY, dpr }`. devicePixelRatio is applied ONLY in
-`applyTransform()` (canvas backing-store scale). Step 1: zoom=1, pan=(0,0).
-Step 3 adds pan/zoom by mutating the viewport — no call-site changes.
+`applyTransform()` (canvas backing-store scale). Pan and zoom MUTATE the
+viewport; `zoomAt`, `panBy` and `applyPinch` in coord.js are the only places
+that change it. Zoom is clamped to 0.25-8x.
+
+Pan/zoom gestures:
+- Two-finger pinch/pan on touch. The transform is computed from the gesture
+  BASELINE (the zoom and pan at the moment the gesture started), NOT from the
+  live viewport — otherwise every pointermove multiplies the zoom again and
+  the gesture runs away to the limit.
+- Wheel pans; ctrl+wheel (the trackpad pinch gesture) zooms about the cursor.
+- A resting hand is dropped from a 3+ touch gesture, so it cannot drag the
+  page around.
 
 ## Data model
 - Stroke = `{ id, tool, color, width, opacity, pointerType, lineStyle,
@@ -236,19 +282,19 @@ Rules:
   worker (phase E), exempt it from Safari's 7-day storage eviction.
 
 ## Known issues
-- (phase C) Strokes and imported layers are in-memory only; reload loses them
-  (IndexedDB autosave lands in a later phase).
-- (phase C) No pan/zoom yet. Layer images are drawn in screen space, so they
-  do not pan/zoom with the ink yet.
-- (phase C) One page per note, and no library/folders screen yet. The Notability
-  library screen is specified in `design/notability-ui-spec.md` §7.
-- (phase C) PDF import is not wired: it needs pdf.js vendored (the user has
-  not approved a dependency yet). Images work.
-- (phase C) Shapes, lasso/transform handles, ruler and rotation dial are not
-  built yet — they are specified in `design/notability-ui-spec.md` §5-§6.
-- (phase B) No keyboard shortcuts yet.
+- (phase C) Imported layers are drawn in SCREEN space, contain-fitted to the
+  canvas, so they do not pan/zoom with the ink yet. They will become
+  page-space objects.
+- (phase C) Folders are rendered in the library but cannot be created yet
+  (the `+` next to "Folders" is a placeholder).
+- (phase C) The library's "Record a lecture", "Find a template", Gallery and
+  Settings are placeholders.
+- (phase C) Audio recording, templates and the AI layer are not built.
+- (phase C) The eraser treats a shape's points as an open polyline, so the
+  closing edge of a rectangle is not erasable.
+- (phase C) No keyboard shortcut for the tools yet (undo/redo are bound to
+  Ctrl/Cmd+Z and Ctrl/Cmd+Shift+Z).
 - (phase B) `pointerrawupdate` is not available in Safari/iPadOS, so latency on
   iPad relies on synchronous painting rather than raw pointer updates.
-- (phase B) No service worker yet, so the app is not offline-capable and does
-  not yet install as a PWA (the manifest and icons ARE shipped; only the
-  service worker is missing). Until phase E, treat it as scratchpad only.
+- (phase B) The service worker is shipped, but the cache name must be bumped
+  on every deploy or the old precache is reused.

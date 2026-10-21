@@ -357,6 +357,36 @@ export function deleteEntry(removed) {
   };
 }
 
+// --- Transforms (move / scale / rotate) -------------------------------------
+// The transforms MUTATE the strokes in place, so undo needs a snapshot of
+// the points taken before the gesture and after it.
+
+export function snapshotStrokes(strokes) {
+  return strokes.map((s) => ({
+    id: s.id,
+    width: s.width,
+    points: s.points.map((p) => ({ ...p })),
+  }));
+}
+
+export function restoreStrokes(strokes, snapshot) {
+  for (const snap of snapshot) {
+    const s = strokes.find((x) => x.id === snap.id);
+    if (!s) continue;
+    s.points = snap.points.map((p) => ({ ...p }));
+    if (typeof snap.width === 'number') s.width = snap.width;
+  }
+}
+
+// A history entry for a transform: undo restores `before`, redo restores
+// `after`.
+export function transformEntry(strokes, before, after) {
+  return {
+    undo: () => restoreStrokes(strokes, before),
+    redo: () => restoreStrokes(strokes, after),
+  };
+}
+
 // --- Eraser hit-testing (stroke eraser: whole-stroke delete) ---------------
 
 function distToSegmentSq(px, py, ax, ay, bx, by) {
