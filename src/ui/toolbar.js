@@ -146,6 +146,14 @@ export function buildToolbar(root, actions) {
 
   // ------------------------------------------------------------- pages pill
   const pagesPill = el('div', 'pill pill-pages');
+  const backBtn = button('ticon', {
+    label: 'All notes',
+    title: 'All notes',
+    onClick: () => actions.onBack(),
+  });
+  backBtn.appendChild(icon('library'));
+  pagesPill.appendChild(backBtn);
+  pagesPill.appendChild(divider());
   const prevBtn = button('ticon', {
     label: 'Previous page',
     title: 'Previous page',
@@ -216,7 +224,9 @@ export function buildToolbar(root, actions) {
       pageLabel.textContent = `${index + 1} / ${count}`;
       prevBtn.disabled = index <= 0;
       nextBtn.disabled = index >= count - 1;
-      pagesPill.hidden = count <= 1;
+      // The pill hides itself when there is nothing to navigate, but the
+      // library button always stays.
+      pagesPill.classList.toggle('is-solo', count <= 1);
     },
   };
 }

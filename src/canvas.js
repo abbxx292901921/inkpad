@@ -32,7 +32,7 @@
 // - A finger that was already down when the pen landed is thrown away.
 // - A touch contact much larger than a fingertip is treated as a palm.
 
-import { screenToPage, applyTransform } from './coord.js';
+import { screenToPage, applyTransform, zoomAt, panBy, applyPinch } from './coord.js';
 import {
   createStroke,
   addPoint,
@@ -56,6 +56,10 @@ const PEN_BARREL_BIT = 2; // pen barrel / side button
 // Anything above this is treated as a palm, not a fingertip. iOS reports 0
 // when the contact geometry is unknown, in which case this filter stays quiet.
 const PALM_CONTACT_PX = 70;
+// A touch that has been down this long without moving is a resting hand, not
+// a deliberate gesture finger. Only used to break ties when 3+ touches are
+// down (a resting hand plus a deliberate pinch).
+const PALM_IDLE_MS = 600;
 
 function coalescedList(e) {
   if (typeof e.getCoalescedEvents === 'function') {
@@ -85,6 +89,11 @@ export function createDrawingSurface(canvas, viewport, hooks) {
   // pointerId -> { stroke, erasing, path[], renderedPieces, coalescedTotal,
   //                pointerType }
   const active = new Map();
+  // Touch tracking for pan/zoom gestures: pointerId -> { x, y, downAt, moved }
+  // (x/y in CSS pixels relative to the canvas).
+  const touches = new Map();
+  // The active two-finger gesture baseline, or null.
+  let pinch = null;
   let debugOn = false;
   let lastPenAt = 0; // timestamp of the most recent pen event (hover or contact)
 
@@ -152,11 +161,15 @@ export function createDrawingSurface(canvas, viewport, hooks) {
   }
 
   function toPagePoint(rawEvent) {
+    const p = screenPoint(rawEvent);
+    const page = screenToPage(p.x, p.y, viewport);
+    return { x: page.x, y: page.y, pressure: pressureOf(rawEvent) };
+  }
+
+  // CSS pixels relative to the canvas top-left.
+  function screenPoint(rawEvent) {
     const rect = canvas.getBoundingClientRect();
-    const sx = rawEvent.clientX - rect.left;
-    const sy = rawEvent.clientY - rect.top;
-    const p = screenToPage(sx, sy, viewport);
-    return { x: p.x, y: p.y, pressure: pressureOf(rawEvent) };
+    return { x: rawEvent.clientX - rect.left, y: rawEvent.clientY - rect.top };
   }
 
   // Paint the pieces that became drawable with the new points.
@@ -219,6 +232,89 @@ export function createDrawingSurface(canvas, viewport, hooks) {
     return Math.max(w, h) > PALM_CONTACT_PX;
   }
 
+  // --- pan / zoom gestures --------------------------------------------------
+
+  // The touches that could take part in a gesture. With three or more down
+  // (a resting hand plus a deliberate pinch) the ones that have been sitting
+  // still are dropped, so the hand cannot drag the page around.
+  function gestureCandidates(now) {
+    const all = [...touches.values()];
+    if (all.length <= 2) return all;
+    const fresh = all.filter((t) => t.moved || now - t.downAt < PALM_IDLE_MS);
+    return fresh.length >= 2 ? fresh : all;
+  }
+
+  // Start a pinch if two touches are down. Returns true if one started.
+  function startPinchIfPossible() {
+    const now = performance.now();
+    const candidates = gestureCandidates(now);
+    if (candidates.length < 2) return false;
+    // The two most recent touches win: a hand that has been resting since
+    // before the pinch started is older, so it loses.
+    const a = candidates[candidates.length - 2];
+    const b = candidates[candidates.length - 1];
+    pinch = {
+      aId: a.id,
+      bId: b.id,
+      midX: (a.x + b.x) / 2,
+      midY: (a.y + b.y) / 2,
+      dist: Math.hypot(a.x - b.x, a.y - b.y),
+      // The baseline zoom/pan: the gesture transform is computed from here,
+      // not from the live viewport.
+      zoom: viewport.zoom,
+      panX: viewport.panX,
+      panY: viewport.panY,
+    };
+    // A finger that was drawing is not a gesture.
+    cancelStroke(pinch.aId);
+    cancelStroke(pinch.bId);
+    return true;
+  }
+
+  function endPinch() {
+    pinch = null;
+  }
+
+  function updatePinch() {
+    if (!pinch) return;
+    const a = touches.get(pinch.aId);
+    const b = touches.get(pinch.bId);
+    if (!a || !b) {
+      endPinch();
+      return;
+    }
+    applyPinch(
+      viewport,
+      {
+        midX: pinch.midX,
+        midY: pinch.midY,
+        dist: pinch.dist,
+        zoom: pinch.zoom,
+        panX: pinch.panX,
+        panY: pinch.panY,
+      },
+      {
+        midX: (a.x + b.x) / 2,
+        midY: (a.y + b.y) / 2,
+        dist: Math.hypot(a.x - b.x, a.y - b.y),
+      },
+    );
+    repaintAll();
+    if (hooks.onViewportChange) hooks.onViewportChange();
+  }
+
+  // Discard an in-flight stroke without committing it.
+  function cancelStroke(pointerId) {
+    const entry = active.get(pointerId);
+    if (!entry) return;
+    active.delete(pointerId);
+    try {
+      if (canvas.hasPointerCapture(pointerId)) canvas.releasePointerCapture(pointerId);
+    } catch {
+      // ignore
+    }
+  }
+
   // Throw away every in-flight finger stroke. Called when a pen goes down:
   // a hand that was already resting on the screen is not ink.
   function discardTouchStrokes() {
@@ -245,11 +341,26 @@ export function createDrawingSurface(canvas, viewport, hooks) {
       // palm-rejection rule and throw away a hand that was already down.
       policy.notePenSeen();
       discardTouchStrokes();
-    } else if (e.pointerType === 'touch' && !touchMayDraw(e)) {
-      // PALM REJECTION: either a pen has been seen (so a finger is a resting
-      // hand) or the contact is too large to be a fingertip.
-      reportDebug(e, 'down (ignored: palm rejection)', 1);
-      return;
+    } else if (e.pointerType === 'touch') {
+      const p = screenPoint(e);
+      touches.set(e.pointerId, {
+        id: e.pointerId,
+        x: p.x,
+        y: p.y,
+        downAt: performance.now(),
+        moved: false,
+      });
+      // A second finger turns the gesture into a pan/zoom.
+      if (startPinchIfPossible()) {
+        reportDebug(e, 'down (gesture: pinch)', 1);
+        return;
+      }
+      if (!touchMayDraw(e)) {
+        // PALM REJECTION: either a pen has been seen (so a finger is a
+        // resting hand) or the contact is too large to be a fingertip.
+        reportDebug(e, 'down (ignored: palm rejection)', 1);
+        return;
+      }
     }
 
     try {
@@ -311,6 +422,23 @@ export function createDrawingSurface(canvas, viewport, hooks) {
       hooks.onPenHover(null);
     }
 
+    if (e.pointerType === 'touch') {
+      const t = touches.get(e.pointerId);
+      if (t) {
+        const p = screenPoint(e);
+        if (Math.hypot(p.x - t.x, p.y - t.y) > 3) t.moved = true;
+        t.x = p.x;
+        t.y = p.y;
+      }
+      // A finger that is part of a gesture never draws.
+      if (pinch) {
+        if (e.pointerId === pinch.aId || e.pointerId === pinch.bId) {
+          updatePinch();
+        }
+        return;
+      }
+    }
+
     const entry = active.get(e.pointerId);
     if (!entry) {
       reportDebug(e, 'move (not drawing)', 1);
@@ -342,6 +470,14 @@ export function createDrawingSurface(canvas, viewport, hooks) {
 
   // Shared finish path for pointerup, pointercancel, lostpointercapture.
   function finishStroke(e, kind) {
+    if (e.pointerType === 'touch') {
+      touches.delete(e.pointerId);
+      // A gesture ends when either of its fingers lifts.
+      if (pinch && (e.pointerId === pinch.aId || e.pointerId === pinch.bId)) {
+        endPinch();
+        // Any finger still down starts a fresh gesture when the next one lands.
+      }
+    }
     const entry = active.get(e.pointerId);
     if (!entry) return;
     active.delete(e.pointerId);
@@ -388,6 +524,34 @@ export function createDrawingSurface(canvas, viewport, hooks) {
   canvas.addEventListener('pointercancel', (e) => finishStroke(e, 'cancel'));
   canvas.addEventListener('lostpointercapture', (e) => finishStroke(e, 'lostcapture'));
   canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+
+  // Wheel / trackpad. A plain wheel scrolls the page (like Notability and
+  // Excalidraw); ctrl+wheel is the trackpad pinch gesture and zooms about
+  // the cursor.
+  canvas.addEventListener(
+    'wheel',
+    (e) => {
+      e.preventDefault();
+      // Normalise line/page deltas to pixels.
+      const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? 400 : 1;
+      const dx = e.deltaX * unit;
+      const dy = e.deltaY * unit;
+      const p = screenPoint(e);
+      if (e.ctrlKey) {
+        // 0.0025 keeps a physical ctrl+wheel notch at ~1.28x while still
+        // feeling smooth for a trackpad pinch (which sends tiny deltas).
+        if (zoomAt(viewport, p.x, p.y, Math.exp(-dy * 0.0025))) {
+          repaintAll();
+          if (hooks.onViewportChange) hooks.onViewportChange();
+        }
+      } else {
+        panBy(viewport, -dx, -dy);
+        repaintAll();
+        if (hooks.onViewportChange) hooks.onViewportChange();
+      }
+    },
+    { passive: false },
+  );
 
   return {
     resize,

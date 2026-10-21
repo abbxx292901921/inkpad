@@ -1,9 +1,13 @@
 // app.js — bootstrap: wire modules together.
 //
-// Owns the document (note -> pages -> strokes/layers), the undo/redo history,
-// the toolbar state, the popovers and the file importer.
+// Owns the toolbar state, the popovers, the file importer and the two
+// screens (library / editor). The DOCUMENT itself lives in src/workspace.js.
+//
+// Screen model:
+//   library  the Notability-style notes/folders screen
+//   editor   the canvas + floating toolbar
 
-import { createViewport, pageToScreen } from './coord.js';
+import { createViewport, pageToScreen, resetViewport } from './coord.js';
 import { createDrawingSurface } from './canvas.js';
 import {
   createHistory,
@@ -24,6 +28,7 @@ import {
 import { buildToolbar } from './ui/toolbar.js';
 import { buildPalette, DEFAULT_PALETTE } from './ui/palette.js';
 import { buildStrokePanel } from './ui/stroke-panel.js';
+import { buildLibrary } from './ui/library.js';
 import { createPopover, el } from './ui/popover.js';
 import {
   fingerDrawingEnabled,
@@ -31,15 +36,11 @@ import {
   resetFingerDrawing,
   subscribeInput,
 } from './input.js';
-import {
-  createNote,
-  createPage,
-  createImageLayer,
-  addLayer,
-  removeLayer,
-  pageHasContent,
-} from './pages.js';
+import { createImageLayer, addLayer, removeLayer, pageHasContent } from './pages.js';
 import { rasterizePdf } from './pdf.js';
+import { createWorkspace } from './workspace.js';
+import { downloadNoteAsPng, printNote } from './export.js';
+import { registerServiceWorker } from './sw-register.js';
 
 const canvas = document.getElementById('page');
 const debugEl = document.getElementById('debug');
@@ -47,23 +48,14 @@ const toolbarEl = document.getElementById('toolbar');
 const penRingEl = document.getElementById('penring');
 const fileInput = document.getElementById('file-input');
 const toastEl = document.getElementById('toast');
+const libraryEl = document.getElementById('library');
+const editorEl = document.getElementById('editor');
 
 const viewport = createViewport();
-
-// --- document --------------------------------------------------------------
-// A note owns pages. A page owns background layers (imported files) and ink.
-// The layers render UNDER the ink, so importing your homework and writing on
-// it is the normal case, not a special one.
-const state = {
-  note: createNote({ title: 'Untitled' }),
-  pageIndex: 0,
-  get page() {
-    return this.note.pages[this.pageIndex];
-  },
-};
 const history = createHistory();
 
 let debugOn = false;
+let zoomPct = 100;
 
 // --- colours ---------------------------------------------------------------
 // Palette 0 is the Notability default. Palette 1 collects custom colours.
@@ -89,6 +81,23 @@ function toast(message, ms = 3200) {
       toastEl.hidden = true;
     }, 200);
   }, ms);
+}
+
+// --- workspace -------------------------------------------------------------
+const workspace = createWorkspace({ onChange: () => syncUI() });
+
+// --- screens ---------------------------------------------------------------
+let screen = 'editor';
+
+function showScreen(name) {
+  screen = name;
+  if (editorEl) editorEl.hidden = name !== 'editor';
+  if (libraryEl) libraryEl.hidden = name !== 'library';
+  if (name === 'library') {
+    library.update(workspace.libraryState({ screen: 'home' }));
+  } else {
+    surface.resize();
+  }
 }
 
 // --- Apple Pencil cursor ring ---------------------------------------------
@@ -117,22 +126,30 @@ function hidePenRing() {
 
 // --- drawing surface -------------------------------------------------------
 const surface = createDrawingSurface(canvas, viewport, {
-  getStrokes: () => state.page.strokes,
-  getLayers: () => state.page.layers,
+  getStrokes: () => (workspace.page ? workspace.page.strokes : []),
+  getLayers: () => (workspace.page ? workspace.page.layers : []),
   commitStroke: (stroke) => {
-    history.commit(addEntry(stroke, state.page.strokes.length));
-    state.page.strokes.push(stroke);
+    const page = workspace.page;
+    if (!page) return;
+    history.commit(addEntry(stroke, page.strokes.length));
+    page.strokes.push(stroke);
+    workspace.markDirty();
     syncUI();
   },
   erasePath: (path) => {
-    if (path.length === 0) return;
-    const ids = eraseHitIds(state.page.strokes, path, getToolOptions('eraser').radius);
+    const page = workspace.page;
+    if (!page || path.length === 0) return;
+    const ids = eraseHitIds(page.strokes, path, getToolOptions('eraser').radius);
     if (ids.length === 0) return; // hit nothing: no history entry, no repaint
-    history.commit(deleteEntry(removeStrokesById(state.page.strokes, ids)));
+    history.commit(deleteEntry(removeStrokesById(page.strokes, ids)));
+    workspace.markDirty();
     surface.redraw();
     syncUI();
   },
   onPenHover,
+  onViewportChange: () => {
+    zoomPct = Math.round(viewport.zoom * 100);
+  },
   debug: (text) => {
     debugEl.textContent = text;
   },
@@ -196,19 +213,21 @@ strokePopover.el.appendChild(strokePanel.el);
 // --- the "more" menu -------------------------------------------------------
 function buildMoreMenu() {
   morePopover.el.textContent = '';
-  morePopover.el.appendChild(el('div', 'menu-head', 'Page'));
+  morePopover.el.appendChild(el('div', 'menu-head', 'This page'));
 
   const clearBtn = el('button', 'menu-item');
   clearBtn.type = 'button';
   clearBtn.appendChild(el('span', 'menu-label', 'Clear this page'));
   clearBtn.addEventListener('click', () => {
-    if (!pageHasContent(state.page)) {
+    const page = workspace.page;
+    if (!page || !pageHasContent(page)) {
       toast('Nothing to clear.');
       return;
     }
-    state.page.strokes.length = 0;
-    for (const layer of [...state.page.layers]) removeLayer(state.page, layer.id);
+    page.strokes.length = 0;
+    for (const layer of [...page.layers]) removeLayer(page, layer.id);
     history.clear();
+    workspace.markDirty();
     surface.redraw();
     syncUI();
     morePopover.close();
@@ -220,10 +239,58 @@ function buildMoreMenu() {
   addPageBtn.type = 'button';
   addPageBtn.appendChild(el('span', 'menu-label', 'Add a blank page'));
   addPageBtn.addEventListener('click', () => {
-    addBlankPage();
+    workspace.addPage();
+    surface.redraw();
     morePopover.close();
   });
   morePopover.el.appendChild(addPageBtn);
+
+  const resetView = el('button', 'menu-item');
+  resetView.type = 'button';
+  resetView.appendChild(el('span', 'menu-label', 'Reset the view'));
+  resetView.appendChild(el('span', 'menu-value', `${zoomPct}%`));
+  resetView.addEventListener('click', () => {
+    resetViewport(viewport);
+    zoomPct = 100;
+    surface.redraw();
+    buildMoreMenu();
+  });
+  morePopover.el.appendChild(resetView);
+
+  morePopover.el.appendChild(el('div', 'menu-head', 'Note'));
+
+  const printBtn = el('button', 'menu-item');
+  printBtn.type = 'button';
+  printBtn.appendChild(el('span', 'menu-label', 'Print / Save as PDF'));
+  printBtn.addEventListener('click', async () => {
+    morePopover.close();
+    if (!workspace.current) return;
+    try {
+      await printNote(workspace.current, { title: workspace.current.title });
+    } catch (err) {
+      console.warn('[inkpad] print failed', err);
+      toast('Could not open the print view.');
+    }
+  });
+  morePopover.el.appendChild(printBtn);
+
+  const pngBtn = el('button', 'menu-item');
+  pngBtn.type = 'button';
+  pngBtn.appendChild(el('span', 'menu-label', 'Download as PNG'));
+  pngBtn.addEventListener('click', async () => {
+    morePopover.close();
+    if (!workspace.current) return;
+    try {
+      await downloadNoteAsPng(workspace.current);
+      toast('Saved the pages as PNG.');
+    } catch (err) {
+      console.warn('[inkpad] PNG export failed', err);
+      toast('Could not export the PNG.');
+    }
+  });
+  morePopover.el.appendChild(pngBtn);
+
+  morePopover.el.appendChild(el('div', 'menu-head', 'Input'));
 
   const fingerItem = el('button', 'menu-item');
   fingerItem.type = 'button';
@@ -247,29 +314,7 @@ function buildMoreMenu() {
   });
   morePopover.el.appendChild(autoItem);
 
-  const state_ = fingerDrawingEnabled();
-  fingerState.textContent = state_ ? 'On' : 'Off';
-}
-
-// --- pages -----------------------------------------------------------------
-function setPage(index) {
-  const count = state.note.pages.length;
-  if (count === 0) return;
-  const next = Math.max(0, Math.min(count - 1, index));
-  if (next === state.pageIndex) {
-    surface.redraw();
-    return;
-  }
-  state.pageIndex = next;
-  history.clear();
-  surface.redraw();
-  syncUI();
-}
-
-function addBlankPage() {
-  const page = createPage({ name: `Page ${state.note.pages.length + 1}` });
-  state.note.pages.push(page);
-  setPage(state.note.pages.length - 1);
+  fingerState.textContent = fingerDrawingEnabled() ? 'On' : 'Off';
 }
 
 // --- file import -----------------------------------------------------------
@@ -279,6 +324,7 @@ function addBlankPage() {
 // of them. PDFs become one page of the note per PDF page, each with the
 // rasterised page as its background.
 async function importFile(file) {
+  if (!workspace.current) workspace.newNote();
   if (file.type === 'application/pdf' || /\.pdf$/i.test(file.name)) {
     await importPdfFile(file);
     return;
@@ -290,7 +336,11 @@ async function importFile(file) {
   const url = URL.createObjectURL(file);
   const layer = createImageLayer({ blob: file, url, name: file.name });
   layer.onLoad = () => surface.redraw();
-  addLayer(state.page, layer);
+  addLayer(workspace.page, layer);
+  workspace.markDirty();
+  if (workspace.current.title === 'Untitled') {
+    workspace.renameNote(file.name.replace(/\.[^.]+$/, ''));
+  }
   toast(`Imported ${file.name} — write on top of it.`);
 }
 
@@ -306,7 +356,12 @@ async function importPdfFile(file) {
     }
 
     const newPages = rendered.map((p) => {
-      const pg = createPage({ name: `Page ${p.pageNumber}` });
+      const pg = {
+        id: `page-pdf-${p.pageNumber}-${Date.now()}`,
+        name: `Page ${p.pageNumber}`,
+        layers: [],
+        strokes: [],
+      };
       const layer = createImageLayer({
         blob: p.blob,
         url: p.url,
@@ -320,18 +375,23 @@ async function importPdfFile(file) {
 
     // A PDF into an empty note REPLACES it (no blank page 1 in front);
     // into a note with content it is appended.
-    const only = state.note.pages[0];
-    const noteIsEmpty = state.note.pages.length === 1 && !pageHasContent(only);
+    const pages = workspace.pages;
+    const only = pages[0];
+    const noteIsEmpty = pages.length === 1 && !pageHasContent(only);
     if (noteIsEmpty) {
       for (const layer of only.layers) removeLayer(only, layer.id);
-      state.note.pages = newPages;
-      state.pageIndex = 0;
+      workspace.current.pages = newPages;
+      workspace.setPage(0);
     } else {
-      state.note.pages.push(...newPages);
-      state.pageIndex = state.note.pages.length - newPages.length;
+      workspace.current.pages.push(...newPages);
+      workspace.setPage(workspace.current.pages.length - newPages.length);
     }
+    workspace.markDirty();
     surface.redraw();
     syncUI();
+    if (workspace.current.title === 'Untitled') {
+      workspace.renameNote(file.name.replace(/\.[^.]+$/, ''));
+    }
     const word = newPages.length === 1 ? 'page' : 'pages';
     toast(`Imported ${newPages.length} ${word} from ${file.name} — write on top.`);
   } catch (err) {
@@ -383,13 +443,17 @@ const toolbar = buildToolbar(toolbarEl, {
     strokePopover.open(anchor);
   },
   onUndo: () => {
-    if (history.undo(state.page.strokes)) {
+    const page = workspace.page;
+    if (page && history.undo(page.strokes)) {
+      workspace.markDirty();
       surface.redraw();
       syncUI();
     }
   },
   onRedo: () => {
-    if (history.redo(state.page.strokes)) {
+    const page = workspace.page;
+    if (page && history.redo(page.strokes)) {
+      workspace.markDirty();
       surface.redraw();
       syncUI();
     }
@@ -410,8 +474,67 @@ const toolbar = buildToolbar(toolbarEl, {
     openOnly(morePopover);
     morePopover.open(anchor);
   },
-  onPrevPage: () => setPage(state.pageIndex - 1),
-  onNextPage: () => setPage(state.pageIndex + 1),
+  onPrevPage: () => {
+    workspace.setPage(workspace.pageIndex - 1);
+    surface.redraw();
+    syncUI();
+  },
+  onNextPage: () => {
+    workspace.setPage(workspace.pageIndex + 1);
+    surface.redraw();
+    syncUI();
+  },
+  onBack: () => {
+    workspace.save();
+    showScreen('library');
+  },
+});
+
+// --- library screen --------------------------------------------------------
+const library = buildLibrary(libraryEl, {
+  onNewNote: () => {
+    workspace.newNote();
+    showScreen('editor');
+    surface.redraw();
+    syncUI();
+  },
+  onOpenNote: async (id) => {
+    await workspace.openNote(id);
+    showScreen('editor');
+    surface.redraw();
+    syncUI();
+  },
+  onImportFile: () => {
+    if (!workspace.current) workspace.newNote();
+    fileInput.click();
+  },
+  onSearch: (q) => {
+    library.update(workspace.libraryState({ screen: 'home', query: q }));
+  },
+  onSelectFolder: (id) => {
+    library.update(workspace.libraryState({ screen: 'folder', folderId: id }));
+  },
+  onSelectScreen: (name) => {
+    library.update(workspace.libraryState({ screen: name }));
+  },
+  onNewFolder: () => {
+    toast('Folders come next — notes work for now.');
+  },
+  onSettings: () => {
+    toast('Settings come next.');
+  },
+  onTemplate: () => {
+    toast('Templates come next.');
+  },
+  onRecordAudio: () => {
+    toast('Audio recording comes next.');
+  },
+  onNotifications: () => {
+    toast('No notifications yet.');
+  },
+  onMore: () => {
+    toast('Nothing else here yet.');
+  },
 });
 
 // --- state sync ------------------------------------------------------------
@@ -447,8 +570,8 @@ function syncUI() {
     canUndo: history.canUndo,
     canRedo: history.canRedo,
     fingerDrawing: fingerDrawingEnabled(),
-    pageIndex: state.pageIndex,
-    pageCount: state.note.pages.length,
+    pageIndex: workspace.pageIndex,
+    pageCount: workspace.pages.length,
   });
   syncStrokePanel();
   if (palettePopover.isOpen()) {
@@ -470,11 +593,32 @@ function setDebug(on) {
 }
 
 window.addEventListener('keydown', (e) => {
+  if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA')) {
+    return;
+  }
   if (e.key === 'd' || e.key === 'D') setDebug(!debugOn);
   if (e.key === 'Escape') {
     palettePopover.close();
     strokePopover.close();
     morePopover.close();
+  }
+  // Ctrl/Cmd + Z / Shift + Z for undo / redo.
+  const mod = e.metaKey || e.ctrlKey;
+  if (mod && e.key.toLowerCase() === 'z') {
+    e.preventDefault();
+    const page = workspace.page;
+    if (!page) return;
+    if (e.shiftKey) {
+      if (history.redo(page.strokes)) {
+        workspace.markDirty();
+        surface.redraw();
+        syncUI();
+      }
+    } else if (history.undo(page.strokes)) {
+      workspace.markDirty();
+      surface.redraw();
+      syncUI();
+    }
   }
 });
 
@@ -490,30 +634,66 @@ window.addEventListener('pointerout', (e) => {
 });
 window.addEventListener('blur', hidePenRing);
 
-surface.resize();
-syncUI();
-setDebug(false);
+// Save when the tab is hidden, so a swipe-to-close does not lose work.
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') workspace.save();
+});
+window.addEventListener('pagehide', () => workspace.save());
+
+// --- boot ------------------------------------------------------------------
+async function boot() {
+  const persistent = await workspace.init();
+  if (!persistent) {
+    // Not fatal: the app works as a scratchpad.
+    console.warn('[inkpad] storage unavailable - notes will not be saved');
+  }
+  if (workspace.notes.length > 0) {
+    await workspace.openNote(workspace.notes[0].id);
+  } else {
+    workspace.newNote();
+  }
+  surface.resize();
+  syncUI();
+  setDebug(false);
+  if (!persistent) {
+    toast('Notes cannot be saved here (storage is blocked).', 5000);
+  }
+}
+
+boot();
+
+registerServiceWorker({
+  onUpdate: () => toast('A new version is ready — reopen Inkpad to update.', 6000),
+});
 
 // Console handle for diagnosis: inspect live state with
 //   __inkpad.strokes.length, __inkpad.viewport, ...
 window.__inkpad = {
   get note() {
-    return state.note;
+    return workspace.current;
   },
   get page() {
-    return state.page;
+    return workspace.page;
   },
   get pageIndex() {
-    return state.pageIndex;
+    return workspace.pageIndex;
   },
   get strokes() {
-    return state.page.strokes;
+    return workspace.page ? workspace.page.strokes : [];
   },
-  state,
+  get notes() {
+    return workspace.ws.notes;
+  },
+  workspace,
   viewport,
   surface,
   history,
   palettes,
-  setPage,
+  showScreen,
   importFile,
+  setPage: (i) => {
+    workspace.setPage(i);
+    surface.redraw();
+    syncUI();
+  },
 };

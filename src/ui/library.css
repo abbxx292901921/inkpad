@@ -1,0 +1,496 @@
+/* ui/library.css — the Notability-style library screen.
+   theme.css is edited elsewhere, so the library styles live here and
+   ui/library.js links this file in at runtime (no build step). Colours come
+   from the theme's custom properties; the extra tints the reference needs
+   (sidebar grey, card tints, periwinkle) are declared once, here. */
+
+.lib {
+  --lib-sidebar: #f2f2f7;
+  --lib-periwinkle: #dfe3f7;
+  --lib-fill: rgba(0, 0, 0, 0.07);
+  position: fixed;
+  inset: 0;
+  z-index: 6;
+  display: flex;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* --- sidebar -------------------------------------------------------------- */
+
+.lib-side {
+  width: 320px;
+  min-width: 248px;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  padding: calc(10px + env(safe-area-inset-top)) 10px calc(16px + env(safe-area-inset-bottom));
+  background: var(--lib-sidebar);
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+}
+
+.lib-icon-btn {
+  width: var(--tap);
+  height: var(--tap);
+  min-width: 0;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--chrome);
+  cursor: pointer;
+}
+
+.lib-icon-btn:hover { background: var(--lib-fill); }
+.lib-icon-btn-sm { width: 30px; height: 30px; border-radius: 10px; }
+
+.lib-icon-btn:focus-visible,
+.lib-nav-item:focus-visible,
+.lib-folder-btn:focus-visible,
+.lib-chevron:focus-visible,
+.lib-new:focus-visible,
+.lib-close:focus-visible,
+.lib-action:focus-visible,
+.lib-card:focus-visible,
+.lib-row-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+/* --- search --------------------------------------------------------------- */
+
+.lib-search {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  height: 36px;
+  margin: 6px 0 14px;
+  padding: 0 10px;
+  border-radius: 10px;
+  background: var(--paper);
+  color: var(--muted);
+}
+
+.lib-search .ico { flex: none; }
+
+.lib-search-input {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: 15px;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.lib-search-input::-webkit-search-cancel-button { -webkit-appearance: none; }
+
+/* --- nav ------------------------------------------------------------------ */
+
+.lib-nav { display: flex; flex-direction: column; gap: 2px; }
+
+.lib-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 10px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: 15px;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+}
+
+.lib-nav-item .ico { color: var(--chrome); }
+.lib-nav-item.is-active { background: var(--lib-fill); font-weight: 600; }
+.lib-nav-item.is-active .ico { color: var(--accent); }
+
+/* --- folders -------------------------------------------------------------- */
+
+.lib-folders-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 22px 4px 6px 10px;
+}
+
+.lib-label {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.lib-tree { list-style: none; margin: 0; padding: 0; }
+.lib-tree-sub { padding-left: 16px; }
+.lib-folder-row { display: flex; align-items: center; gap: 2px; }
+
+.lib-chevron {
+  width: 24px;
+  height: 24px;
+  min-width: 0;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.lib-chevron .ico { transition: transform 150ms ease; }
+.lib-chevron[aria-expanded="true"] .ico { transform: rotate(90deg); }
+
+.lib-folder-btn {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 8px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: 15px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.lib-folder-btn[aria-current="true"] { font-weight: 700; }
+
+.lib-dot { width: 10px; height: 10px; flex: none; border-radius: 50%; background: var(--muted); }
+
+.lib-folder-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lib-count {
+  flex: none;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--lib-fill);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- main pane ------------------------------------------------------------ */
+
+.lib-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+
+.lib-top {
+  display: flex;
+  justify-content: flex-end;
+  padding: calc(10px + env(safe-area-inset-top)) 18px 0;
+}
+
+.lib-top-actions { display: flex; align-items: center; gap: 8px; }
+
+.lib-new {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 38px;
+  padding: 0 18px;
+  border: 0;
+  border-radius: 19px;
+  background: var(--accent);
+  color: #fff;
+  font: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: var(--pill-shadow);
+}
+
+.lib-new-plus { font-size: 19px; font-weight: 400; line-height: 1; }
+
+.lib-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+}
+
+.lib-screen { display: none; }
+.lib-screen.is-active { display: block; }
+
+.lib-home-inner,
+.lib-pane { max-width: 640px; margin: 0 auto; padding: 10px 24px 72px; }
+.lib-pane { max-width: 720px; }
+
+/* --- home: welcome block -------------------------------------------------- */
+
+.lib-welcome { position: relative; }
+.lib-logo { display: flex; justify-content: center; padding-top: 8px; }
+.lib-logo-img { width: 72px; height: 72px; border-radius: 18px; box-shadow: var(--pill-shadow); }
+
+.lib-h1 {
+  margin: 14px 0 10px;
+  font-size: 34px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  text-align: center;
+}
+
+.lib-quote {
+  max-width: 460px;
+  margin: 0 auto 28px;
+  text-align: center;
+  color: var(--muted);
+}
+
+.lib-quote-text { margin: 0 0 6px; font-size: 15px; font-style: italic; line-height: 1.5; }
+
+.lib-quote-cite { font-size: 13px; }
+
+.lib-actions { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+
+.lib-action {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 22px 10px 18px;
+  border: 0;
+  border-radius: var(--radius-card);
+  background: var(--lib-tint-bg);
+  color: var(--ink);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.lib-action .ico { color: var(--lib-tint-ink); stroke-width: 1.6; }
+.lib-action-label { text-align: center; }
+
+.lib-tint-orange { --lib-tint-bg: #ffe8d8; --lib-tint-ink: #d9762a; }
+.lib-tint-blue { --lib-tint-bg: #e2efff; --lib-tint-ink: #0a84ff; }
+.lib-tint-grey { --lib-tint-bg: #ececf1; --lib-tint-ink: #6b6b73; }
+
+/* --- home: sections ------------------------------------------------------- */
+
+.lib-h2 { margin: 34px 0 14px; font-size: 24px; font-weight: 800; letter-spacing: -0.01em; }
+.lib-section-head { position: relative; }
+
+.lib-close {
+  position: absolute;
+  top: 4px;
+  right: 0;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 50%;
+  background: var(--lib-fill);
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.lib-welcome > .lib-close { top: 0; }
+
+/* --- thumbnails ----------------------------------------------------------- */
+
+.lib-thumb {
+  position: relative;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border-radius: 8px;
+  background: var(--paper);
+  box-shadow: inset 0 0 0 1px var(--hairline);
+}
+
+.lib-thumb-img { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+/* No thumbnail (or a broken one): a blank page with a faint outline. */
+.lib-thumb.is-blank::before {
+  content: "";
+  width: 44%;
+  height: 58%;
+  border: 1.5px solid var(--hairline);
+  border-radius: 3px;
+}
+
+.lib-thumb-row { width: 56px; height: 76px; }
+.lib-thumb-card { width: 100%; height: 148px; border-radius: 10px; }
+
+/* --- note cards ----------------------------------------------------------- */
+
+.lib-carousel {
+  display: flex;
+  gap: 14px;
+  padding: 2px 2px 12px;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scroll-snap-type: x proximity;
+}
+
+.lib-card {
+  flex: 0 0 208px;
+  scroll-snap-align: start;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 10px 12px;
+  border: 0;
+  border-radius: var(--radius-card);
+  background: var(--paper);
+  box-shadow: var(--card-shadow);
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.lib-card-title {
+  font-size: 15px;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lib-card-meta { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.lib-card-date { font-size: 13px; color: var(--muted); }
+
+.lib-chip {
+  align-self: flex-start;
+  max-width: 100%;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: var(--lib-fill);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lib-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(148px, 1fr)); gap: 14px; }
+.lib-card-grid { flex: 1 1 auto; }
+
+/* --- note lists ----------------------------------------------------------- */
+
+.lib-page-title { margin: 6px 0 18px; font-size: 40px; font-weight: 800; letter-spacing: -0.02em; }
+.lib-list { list-style: none; margin: 0; padding: 0; }
+.lib-row + .lib-row { border-top: 1px solid var(--hairline); }
+
+.lib-row-btn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 6px;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.lib-row-title {
+  flex: 1;
+  min-width: 0;
+  font-size: 17px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lib-row-date { flex: none; font-size: 13px; color: var(--muted); }
+.lib-empty { padding: 36px 0; color: var(--muted); font-size: 15px; text-align: center; }
+
+/* --- daily brain break banner --------------------------------------------- */
+
+.lib-banner {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 20px 18px 20px 22px;
+  border-radius: 16px;
+  background: var(--paper);
+  box-shadow: var(--card-shadow);
+}
+
+.lib-banner-new {
+  position: absolute;
+  top: 0;
+  left: 0;
+  padding: 4px 11px;
+  border-radius: 16px 0 10px 0;
+  background: var(--accent);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+}
+
+.lib-banner-text { flex: 1; min-width: 0; }
+.lib-banner-day { font-size: 20px; font-weight: 800; }
+.lib-banner-sub { margin-top: 2px; font-size: 14px; color: var(--muted); }
+
+.lib-banner-art {
+  width: 132px;
+  height: 96px;
+  flex: none;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  grid-template-rows: repeat(3, 1fr);
+  gap: 5px;
+  padding: 11px;
+  border-radius: 12px;
+  background: var(--lib-periwinkle);
+}
+
+.lib-tile { border-radius: 4px; background: var(--paper); }
+.lib-tile.is-slide { transform: translate(6px, 6px); opacity: 0.75; }
+
+/* --- narrow screens ------------------------------------------------------- */
+
+@media (max-width: 720px) {
+  .lib-side { width: 250px; min-width: 210px; }
+  .lib-home-inner,
+  .lib-pane { padding-left: 16px; padding-right: 16px; }
+  .lib-h1 { font-size: 28px; }
+  .lib-page-title { font-size: 32px; }
+}

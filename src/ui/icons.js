@@ -13,6 +13,15 @@ const F = (d) => ({ d, fill: true });
 export const ICONS = {
   // --- navigation ---
   back: { paths: [P('M15 5 L8 12 L15 19')] },
+  // Four squares: the library / notes grid.
+  library: {
+    paths: [
+      P('M3.5 3.5 L10.5 3.5 L10.5 10.5 L3.5 10.5 Z'),
+      P('M13.5 3.5 L20.5 3.5 L20.5 10.5 L13.5 10.5 Z'),
+      P('M3.5 13.5 L10.5 13.5 L10.5 20.5 L3.5 20.5 Z'),
+      P('M13.5 13.5 L20.5 13.5 L20.5 20.5 L13.5 20.5 Z'),
+    ],
+  },
   close: { paths: [P('M6 6 L18 18'), P('M18 6 L6 18')] },
   chevronRight: { paths: [P('M9 5 L16 12 L9 19')] },
   chevronDown: { paths: [P('M5 9 L12 16 L19 9')] },

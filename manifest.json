@@ -6,9 +6,13 @@
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
+  "display_override": ["standalone", "minimal-ui", "browser"],
   "orientation": "any",
   "background_color": "#ffffff",
   "theme_color": "#ffffff",
+  "lang": "en",
+  "dir": "ltr",
+  "prefer_related_applications": false,
   "categories": ["productivity", "education", "utilities"],
   "icons": [
     {

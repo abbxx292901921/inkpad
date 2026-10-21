@@ -15,10 +15,15 @@
   <link rel="stylesheet" href="theme.css">
 </head>
 <body>
-  <canvas id="page" aria-label="Note-taking canvas. Draw with pen, touch, or mouse."></canvas>
+  <!-- The editor: canvas + floating toolbar. -->
+  <div id="editor" class="screen">
+    <canvas id="page" aria-label="Note-taking canvas. Draw with pen, touch, or mouse."></canvas>
+    <!-- Toolbar: built by src/ui/toolbar.js (floating pills). -->
+    <div id="toolbar" class="toolbar"></div>
+  </div>
 
-  <!-- Toolbar: built by src/ui/toolbar.js (floating pills). -->
-  <div id="toolbar" class="toolbar"></div>
+  <!-- The library: built by src/ui/library.js. -->
+  <div id="library" class="screen" hidden></div>
 
   <!-- File importer. Images become page layers (written on top of). -->
   <input id="file-input" type="file" accept="image/*,application/pdf" hidden>

@@ -60,6 +60,11 @@ body {
   -webkit-tap-highlight-color: transparent;
 }
 
+/* The two screens. The library draws its own fixed overlay. */
+.screen[hidden] {
+  display: none;
+}
+
 /* --- icons ---------------------------------------------------------------- */
 
 .ico {
@@ -126,6 +131,14 @@ body {
   left: 0;
   gap: 0;
   padding: 2px 4px;
+}
+
+/* With a single page there is nothing to page through, so the nav hides and
+   only the library button is left. */
+.pill-pages.is-solo .tdiv,
+.pill-pages.is-solo .page-label,
+.pill-pages.is-solo .ticon:not(:first-child) {
+  display: none;
 }
 
 .page-label {
