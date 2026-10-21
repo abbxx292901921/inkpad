@@ -273,6 +273,58 @@ export function createWorkspace({ onChange } = {}) {
     return folder;
   }
 
+  async function createFolder(name, color = '#0a84ff') {
+    const folder = {
+      id: `folder-${Date.now()}-${Math.floor(Math.random() * 1e6)}`,
+      name: String(name || 'New folder').trim() || 'New folder',
+      color,
+      parentId: null,
+      createdAt: Date.now(),
+    };
+    await saveFolder(folder);
+    return folder;
+  }
+
+  async function renameFolder(id, name) {
+    const folder = ws.folders.find((f) => f.id === id);
+    if (!folder) return null;
+    folder.name = String(name || '').trim() || folder.name;
+    if (ws.persistent) {
+      try {
+        await storage.saveFolder(folder);
+      } catch (err) {
+        ws.lastError = err;
+      }
+    }
+    notify();
+    return folder;
+  }
+
+  async function deleteFolder(id) {
+    if (ws.persistent) {
+      try {
+        await storage.deleteFolder(id);
+      } catch (err) {
+        ws.lastError = err;
+      }
+    }
+    ws.folders = ws.folders.filter((f) => f.id !== id);
+    // Notes in that folder fall back to no folder rather than disappearing.
+    for (const note of ws.notes) {
+      if (note.folderId === id) note.folderId = null;
+    }
+    if (ws.current && ws.current.folderId === id) ws.current.folderId = null;
+    notify();
+  }
+
+  async function moveToFolder(noteId, folderId) {
+    const note = ws.notes.find((n) => n.id === noteId);
+    if (note) note.folderId = folderId;
+    if (ws.current && ws.current.id === noteId) ws.current.folderId = folderId;
+    await save();
+    notify();
+  }
+
   // --- library state -------------------------------------------------------
 
   function libraryState({ screen = 'home', query = '', folderId = null } = {}) {
@@ -321,6 +373,10 @@ export function createWorkspace({ onChange } = {}) {
     setPage,
     addPage,
     saveFolder,
+    createFolder,
+    renameFolder,
+    deleteFolder,
+    moveToFolder,
     libraryState,
     get persistent() {
       return ws.persistent;

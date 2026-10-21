@@ -72,6 +72,10 @@ Regenerate the service worker's precache list after adding a file:
 - `src/coord.js` — the ONLY screen<->page conversion. Nothing else touches zoom/pan/dpr.
 - `sw.js` — the service worker (classic script, at the repo root).
 - `tools/gen-precache.mjs` — regenerates the service worker's precache list.
+- `tests/` — the test suite. Plain Node scripts, no framework, no
+  dependencies: `node tests/run-all.mjs` runs all ten suites (494 checks).
+  Every suite prints `ALL N CHECKS PASSED` and exits non-zero on the first
+  failure, so they work in CI as-is.
 - `design/notability-ui-spec.md` — the Notability UI rebuild spec, transcribed
   from the user's screenshots. Source of truth for the toolbar/palette/library
   work.

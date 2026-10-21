@@ -171,7 +171,15 @@ export function shapeOutline(stroke) {
   const pts = stroke.points ?? [];
   if (!pts.length) return null;
   const out = pts.map((p) => [p.x, p.y]);
-  if (isClosedShape(stroke.shape)) out.push([out[0][0], out[0][1]]);
+  if (isClosedShape(stroke.shape)) {
+    // Close the loop, but do not double-close it: the stroke's own polyline
+    // may already end where it started.
+    const first = out[0];
+    const last = out[out.length - 1];
+    if (out.length < 2 || first[0] !== last[0] || first[1] !== last[1]) {
+      out.push([first[0], first[1]]);
+    }
+  }
   return out;
 }
 
@@ -317,6 +325,12 @@ export function createShapeStroke({
   stroke.kind = 'shape';
   stroke.shape = kind;
   stroke.fill = Boolean(fill);
-  stroke.points = shapePoints(kind, x0, y0, x1, y1, { snap });
+  const points = shapePoints(kind, x0, y0, x1, y1, { snap });
+  // A closed shape's polyline must include the closing edge, or the free
+  // eraser (which treats the points as an open polyline) cannot reach it.
+  if (isClosedShape(kind) && points.length > 1) {
+    points.push({ ...points[0] });
+  }
+  stroke.points = points;
   return stroke;
 }

@@ -36,12 +36,13 @@ import {
   resetFingerDrawing,
   subscribeInput,
 } from './input.js';
-import { createImageLayer, addLayer, removeLayer, pageHasContent } from './pages.js';
+import { createImageLayer, addLayer, removeLayer, pageHasContent, createPage } from './pages.js';
 import { rasterizePdf } from './pdf.js';
 import { createWorkspace } from './workspace.js';
 import { downloadNoteAsPng, printNote } from './export.js';
 import { registerServiceWorker } from './sw-register.js';
 import { buildShapeMenu } from './ui/shape-menu.js';
+import { buildTextPrompt, buildListPrompt } from './ui/prompt.js';
 import { buildSelection } from './ui/selection.js';
 import { buildRuler } from './ui/ruler.js';
 import { buildRotationDial } from './ui/rotation-dial.js';
@@ -284,6 +285,48 @@ function buildMoreMenu() {
 
   morePopover.el.appendChild(el('div', 'menu-head', 'Note'));
 
+  const renameBtn = el('button', 'menu-item');
+  renameBtn.type = 'button';
+  renameBtn.appendChild(el('span', 'menu-label', 'Rename this note'));
+  renameBtn.addEventListener('click', () => {
+    morePopover.close();
+    openTextPrompt({
+      title: 'Note name',
+      value: workspace.current ? workspace.current.title : '',
+      placeholder: 'Untitled',
+      onSubmit: (text) => {
+        workspace.renameNote(text);
+        syncUI();
+      },
+    });
+  });
+  morePopover.el.appendChild(renameBtn);
+
+  const folderBtn = el('button', 'menu-item');
+  folderBtn.type = 'button';
+  folderBtn.appendChild(el('span', 'menu-label', 'Move to a folder'));
+  folderBtn.addEventListener('click', () => {
+    morePopover.close();
+    openFolderPicker();
+  });
+  morePopover.el.appendChild(folderBtn);
+
+  const newFolderBtn = el('button', 'menu-item');
+  newFolderBtn.type = 'button';
+  newFolderBtn.appendChild(el('span', 'menu-label', 'New folder'));
+  newFolderBtn.addEventListener('click', () => {
+    morePopover.close();
+    openTextPrompt({
+      title: 'Folder name',
+      placeholder: 'Math 220',
+      onSubmit: async (text) => {
+        await workspace.createFolder(text);
+        toast(`Created the folder "${text}".`);
+      },
+    });
+  });
+  morePopover.el.appendChild(newFolderBtn);
+
   const printBtn = el('button', 'menu-item');
   printBtn.type = 'button';
   printBtn.appendChild(el('span', 'menu-label', 'Print / Save as PDF'));
@@ -314,6 +357,28 @@ function buildMoreMenu() {
     }
   });
   morePopover.el.appendChild(pngBtn);
+
+  const deleteBtn = el('button', 'menu-item menu-item-danger', 'Delete this note');
+  deleteBtn.type = 'button';
+  deleteBtn.addEventListener('click', () => {
+    morePopover.close();
+    openTextPrompt({
+      title: 'Delete this note?',
+      placeholder: 'Type DELETE to confirm',
+      onSubmit: (text) => {
+        if (text.toUpperCase() !== 'DELETE') {
+          toast('Not deleted — type DELETE to confirm.');
+          return;
+        }
+        const id = workspace.current.id;
+        workspace.deleteNote(id).then(() => {
+          toast('Note deleted.');
+          showScreen('library');
+        });
+      },
+    });
+  });
+  morePopover.el.appendChild(deleteBtn);
 
   morePopover.el.appendChild(el('div', 'menu-head', 'Input'));
 
@@ -395,12 +460,7 @@ async function importPdfFile(file) {
     }
 
     const newPages = rendered.map((p) => {
-      const pg = {
-        id: `page-pdf-${p.pageNumber}-${Date.now()}`,
-        name: `Page ${p.pageNumber}`,
-        layers: [],
-        strokes: [],
-      };
+      const pg = createPage({ name: `Page ${p.pageNumber}` });
       const layer = createImageLayer({
         blob: p.blob,
         url: p.url,
@@ -701,6 +761,53 @@ function openShapeMenu(anchor) {
   shapeMenu.open(anchor);
 }
 
+// --- prompts ---------------------------------------------------------------
+// A text prompt and a list prompt, both floating cards over the canvas.
+const textPromptPopover = createPopover({ className: 'pop-prompt', label: 'Prompt' });
+const listPromptPopover = createPopover({ className: 'pop-prompt', label: 'Choose' });
+
+function openTextPrompt({ title, value = '', placeholder = '', onSubmit }) {
+  const prompt = buildTextPrompt({
+    title,
+    value,
+    placeholder,
+    onSubmit: (text) => {
+      textPromptPopover.close();
+      onSubmit(text);
+    },
+    onCancel: () => textPromptPopover.close(),
+  });
+  textPromptPopover.el.textContent = '';
+  textPromptPopover.el.appendChild(prompt.el);
+  for (const p of ALL_POPOVERS) p.close();
+  textPromptPopover.open(toolbarEl.querySelector('.pill-right') || toolbarEl);
+  prompt.focus();
+}
+
+function openFolderPicker() {
+  const items = [
+    { id: null, label: 'No folder' },
+    ...workspace.folders.map((f) => ({ id: f.id, label: f.name, color: f.color })),
+  ];
+  const list = buildListPrompt({
+    title: 'Move to a folder',
+    items,
+    emptyText: 'No folders yet.',
+    onSelect: async (item) => {
+      listPromptPopover.close();
+      if (workspace.current) {
+        await workspace.moveToFolder(workspace.current.id, item.id);
+        toast(item.id ? `Moved to "${item.label}".` : 'Removed from its folder.');
+      }
+    },
+    onCancel: () => listPromptPopover.close(),
+  });
+  listPromptPopover.el.textContent = '';
+  listPromptPopover.el.appendChild(list.el);
+  for (const p of ALL_POPOVERS) p.close();
+  listPromptPopover.open(toolbarEl.querySelector('.pill-right') || toolbarEl);
+}
+
 // --- library screen --------------------------------------------------------
 const library = buildLibrary(libraryEl, {
   onNewNote: () => {
@@ -727,9 +834,15 @@ const library = buildLibrary(libraryEl, {
   },
   onSelectScreen: (name) => {
     library.update(workspace.libraryState({ screen: name }));
-  },
-  onNewFolder: () => {
-    toast('Folders come next — notes work for now.');
+  },  onNewFolder: () => {
+    openTextPrompt({
+      title: 'Folder name',
+      placeholder: 'Math 220',
+      onSubmit: async (text) => {
+        await workspace.createFolder(text);
+        toast(`Created the folder "${text}".`);
+      },
+    });
   },
   onSettings: () => {
     toast('Settings come next.');

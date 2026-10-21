@@ -554,6 +554,104 @@ body {
   font-size: 14px;
 }
 
+/* --- prompts -------------------------------------------------------------- */
+
+.pop-prompt {
+  min-width: 280px;
+}
+
+.prompt-title {
+  font-size: 15px;
+  font-weight: 700;
+  margin-bottom: 10px;
+}
+
+.prompt-input {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  background: #fff;
+  color: var(--ink);
+  font: inherit;
+  font-size: 15px;
+}
+
+.prompt-input:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+  border-color: var(--accent);
+}
+
+.prompt-row {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 12px;
+}
+
+.prompt-btn {
+  padding: 8px 14px;
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  background: #f2f2f7;
+  color: var(--ink);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.prompt-btn-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.prompt-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 260px;
+  overflow: auto;
+}
+
+.prompt-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: 15px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.prompt-item:hover {
+  background: #f2f2f7;
+}
+
+.prompt-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex: none;
+}
+
+.prompt-empty {
+  padding: 10px 8px;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.menu-item-danger {
+  color: #d70015;
+}
+
 /* --- toast ---------------------------------------------------------------- */
 
 .toast {

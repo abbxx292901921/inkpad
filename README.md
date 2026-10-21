@@ -68,6 +68,14 @@ under a subpath like `/inkpad/`.
 - Press `D` for the debug overlay; `__inkpad` in the console exposes
   `{ note, page, strokes, selected, viewport, surface, history, palettes }`.
 
+## Tests
+
+```bash
+node tests/run-all.mjs
+```
+
+Ten plain Node suites, 494 checks, no framework and no dependencies.
+
 ## Offline
 
 A service worker precaches the whole app, so it opens with no network. The
