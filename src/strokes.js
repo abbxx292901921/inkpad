@@ -41,8 +41,20 @@ export function createStroke({
   width = 3,
   opacity = 1,
   pointerType = 'mouse',
+  lineStyle = 'solid',
+  pressureTaper = true,
 } = {}) {
-  return { id: makeId(), tool, color, width, opacity, pointerType, points: [] };
+  return {
+    id: makeId(),
+    tool,
+    color,
+    width,
+    opacity,
+    pointerType,
+    lineStyle,
+    pressureTaper,
+    points: [],
+  };
 }
 
 export function addPoint(stroke, x, y, pressure) {
@@ -68,13 +80,54 @@ export function isTranslucent(stroke) {
   return (stroke.opacity ?? 1) < 1;
 }
 
+// Line styles. `dash` factors multiply the stroke width so the pattern
+// scales with the line; `widthScale` thins the whole stroke.
+export const LINE_STYLES = {
+  solid: { dash: null, widthScale: 1 },
+  hairline: { dash: null, widthScale: 0.55 },
+  dashed: { dash: [3, 2.2], widthScale: 1 },
+  dotted: { dash: [0.01, 2.4], widthScale: 1 },
+};
+
+// True for any style that is not a plain continuous line.
+//
+// TRANSLUCENT strokes are never textured. A textured stroke re-strokes its
+// whole path on every pointermove, which would stack a translucent stroke's
+// alpha and make the marker darken as you draw. Translucent strokes always
+// use the batched (paint-once) path instead, so they stay solid-coloured.
+export function isTextured(stroke) {
+  if (isTranslucent(stroke)) return false;
+  const s = stroke.lineStyle;
+  return Boolean(s) && s !== 'solid';
+}
+
+function lineStyleSpec(stroke) {
+  return LINE_STYLES[stroke.lineStyle] ?? LINE_STYLES.solid;
+}
+
+function applyLineStyle(ctx, stroke) {
+  const spec = lineStyleSpec(stroke);
+  if (spec.dash) {
+    const w = Math.max(0.5, stroke.width);
+    ctx.setLineDash(spec.dash.map((f) => Math.max(0.1, f * w)));
+  } else if (typeof ctx.setLineDash === 'function') {
+    ctx.setLineDash([]);
+  }
+  return spec;
+}
+
 // Piece i (1-based). Requires points i-1, i and i+1 to exist.
 function pieceAt(stroke, i) {
   const p = stroke.points;
   const ctrl = p[i];
   const start = i === 1 ? p[0] : mid(p[i - 1], p[i]);
   const end = mid(p[i], p[i + 1]);
-  const width = (stroke.width * (p[i - 1].pressure + ctrl.pressure)) / 2;
+  // A pressure-tapered stroke follows the stylus pressure; a pencil or a
+  // chisel marker has a constant width.
+  const width =
+    stroke.pressureTaper === false
+      ? stroke.width
+      : (stroke.width * (p[i - 1].pressure + ctrl.pressure)) / 2;
   return {
     sx: start.x,
     sy: start.y,
@@ -159,7 +212,12 @@ export function drawTail(ctx, stroke) {
   }
   const s = n === 2 ? p[0] : mid(p[n - 2], p[n - 1]);
   const e = p[n - 1];
-  const w = n === 2 ? stroke.width * p[0].pressure : (stroke.width * (p[n - 2].pressure + p[n - 1].pressure)) / 2;
+  const w =
+    stroke.pressureTaper === false
+      ? stroke.width
+      : n === 2
+        ? stroke.width * p[0].pressure
+        : (stroke.width * (p[n - 2].pressure + p[n - 1].pressure)) / 2;
   ctx.save();
   applyStyle(ctx, stroke);
   ctx.lineWidth = Math.max(0.5, w);
@@ -170,10 +228,45 @@ export function drawTail(ctx, stroke) {
   ctx.restore();
 }
 
+// Stroke a whole stroke as ONE path. Used for the textured styles (dashed,
+// dotted, hairline) so the dash pattern is continuous along the entire
+// stroke instead of restarting on every piece.
+//
+// Re-stroking the whole path is safe: the stroke is opaque, and the path
+// prefix never changes, so the dash phase is identical to the previous
+// version and no stale pixels are left behind.
+export function drawStrokePath(ctx, stroke) {
+  const p = stroke.points;
+  const n = p.length;
+  if (n === 0) return;
+  if (n === 1) {
+    drawDot(ctx, stroke, p[0]);
+    return;
+  }
+  ctx.save();
+  applyStyle(ctx, stroke);
+  const spec = applyLineStyle(ctx, stroke);
+  ctx.lineWidth = Math.max(0.5, stroke.width * spec.widthScale);
+  ctx.beginPath();
+  ctx.moveTo(p[0].x, p[0].y);
+  for (let i = 1; i <= n - 2; i++) {
+    const q = pieceAt(stroke, i);
+    ctx.quadraticCurveTo(q.cx, q.cy, q.ex, q.ey);
+  }
+  if (n === 2) ctx.lineTo(p[1].x, p[1].y);
+  else ctx.lineTo(p[n - 1].x, p[n - 1].y);
+  ctx.stroke();
+  ctx.restore();
+}
+
 // Full redraw of one stroke (resize / undo / redo / repaint).
 export function renderStroke(ctx, stroke) {
   const n = stroke.points.length;
   if (n === 0) return;
+  if (isTextured(stroke)) {
+    drawStrokePath(ctx, stroke);
+    return;
+  }
   if (n <= 2) {
     drawTail(ctx, stroke);
     return;

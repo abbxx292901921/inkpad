@@ -1,9 +1,24 @@
-/* Inkpad theme — step 1: light theme only. Dark mode arrives in step 11. */
+/* Inkpad theme — the Notability-style chrome.
+   Design tokens come straight from the reference screenshots:
+   accent #0a84ff, white floating pills with a soft shadow, 20px pill radius,
+   14px card radius, monochrome icons that turn blue when active. */
 
 :root {
   color-scheme: light;
   --ink: #1b1b1b;
   --paper: #ffffff;
+  --accent: #0a84ff;
+  --accent-soft: #e8f2ff;
+  --chrome: #4a4a4a;
+  --muted: #8e8e93;
+  --hairline: #e5e5ea;
+  --pill-bg: rgba(255, 255, 255, 0.94);
+  --pill-shadow: 0 6px 24px rgba(0, 0, 0, 0.16);
+  --card-shadow: 0 10px 34px rgba(0, 0, 0, 0.2);
+  --radius-pill: 20px;
+  --radius-card: 14px;
+  --radius-btn: 10px;
+  --tap: 44px;
 }
 
 * {
@@ -22,7 +37,6 @@ body {
   color: var(--ink);
   font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
   overscroll-behavior: none;
-  /* iOS: stop rubber-banding / pull-to-refresh behind the canvas. */
   position: fixed;
   inset: 0;
   -webkit-text-size-adjust: 100%;
@@ -46,7 +60,502 @@ body {
   -webkit-tap-highlight-color: transparent;
 }
 
-/* Apple Pencil hover cursor ring. Never interactive. */
+/* --- icons ---------------------------------------------------------------- */
+
+.ico {
+  display: block;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+
+.ico path[fill="currentColor"] {
+  stroke: none;
+}
+
+/* --- top bar -------------------------------------------------------------- */
+
+/* The container spans the screen but stays click-through so strokes can
+   start anywhere. Only the pills themselves take pointer events. */
+.toolbar {
+  position: fixed;
+  top: calc(10px + env(safe-area-inset-top));
+  left: 12px;
+  right: 12px;
+  z-index: 5;
+  height: 0;
+  pointer-events: none;
+}
+
+.topbar {
+  position: relative;
+  height: 0;
+}
+
+.pill {
+  position: absolute;
+  top: 0;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px;
+  background: var(--pill-bg);
+  border-radius: var(--radius-pill);
+  box-shadow: var(--pill-shadow);
+  pointer-events: auto;
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+}
+
+.pill-center {
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 0;
+  border-radius: 22px;
+  overflow: hidden;
+}
+
+.pill-right {
+  right: 0;
+}
+
+/* --- the island (tool pill) ----------------------------------------------- */
+
+.island {
+  display: flex;
+  flex-direction: column;
+  transition: width 160ms ease;
+}
+
+.island-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px;
+}
+
+.island-opts {
+  border-top: 1px solid var(--hairline);
+  display: none;
+}
+
+.island.is-expanded .island-opts {
+  display: flex;
+}
+
+.island.is-expanded {
+  box-shadow: var(--pill-shadow);
+}
+
+/* --- icon buttons --------------------------------------------------------- */
+
+.ticon {
+  position: relative;
+  width: var(--tap);
+  height: var(--tap);
+  min-width: 0;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--chrome);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.ticon:hover:not(:disabled) {
+  background: rgba(0, 0, 0, 0.05);
+}
+
+.ticon:disabled {
+  opacity: 0.28;
+  cursor: default;
+}
+
+.ticon:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+/* Active tool: blue glyph plus a blue underline, like the reference. */
+.ticon.is-active {
+  color: var(--accent);
+}
+
+.ticon.is-active::after {
+  content: "";
+  position: absolute;
+  bottom: 3px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 18px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--accent);
+}
+
+.ticon-chevron .ico {
+  transition: transform 160ms ease;
+}
+
+.island.is-expanded .ticon-chevron .ico {
+  transform: rotate(180deg);
+}
+
+/* The stroke button previews the current thickness. */
+.ticon-stroke .stroke-glyph {
+  stroke-width: var(--stroke-w, 3px);
+}
+
+.tdiv {
+  width: 1px;
+  height: 22px;
+  align-self: center;
+  margin: 0 4px;
+  background: var(--hairline);
+  flex: none;
+}
+
+/* --- quick colour swatches ------------------------------------------------ */
+
+.optgroup {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.qswatch {
+  width: 30px;
+  height: 30px;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background-clip: padding-box;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.18);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  -webkit-tap-highlight-color: transparent;
+}
+
+.qswatch.is-white {
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.28);
+}
+
+.qswatch[aria-pressed="true"] {
+  box-shadow: 0 0 0 2px var(--accent);
+}
+
+.qswatch-more {
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--hairline);
+  color: var(--muted);
+}
+
+.qswatch-more .ico {
+  stroke-width: 2;
+}
+
+/* --- popovers ------------------------------------------------------------- */
+
+.popover {
+  position: fixed;
+  z-index: 20;
+  min-width: 300px;
+  padding: 14px;
+  background: #fff;
+  border-radius: var(--radius-card);
+  box-shadow: var(--card-shadow);
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.popover[hidden] {
+  display: none;
+}
+
+/* --- the colour card ------------------------------------------------------ */
+
+.pal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.pal-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.wheel {
+  position: relative;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  cursor: pointer;
+  background: conic-gradient(
+    #ff3b30, #ff9f0a, #ffd60a, #34c759,
+    #0a84ff, #af52de, #ff2d95, #ff3b30
+  );
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.12);
+  flex: none;
+}
+
+.wheel::after {
+  content: "";
+  position: absolute;
+  inset: 5px;
+  border-radius: 50%;
+  background: #fff;
+}
+
+.wheel-input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+}
+
+.pal-grid {
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  gap: 10px 8px;
+}
+
+.pal-swatch {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  cursor: pointer;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.18);
+}
+
+.pal-swatch.is-selected {
+  box-shadow: 0 0 0 2px #fff, 0 0 0 3.5px rgba(0, 0, 0, 0.45);
+}
+
+.pal-check {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.pal-dots {
+  display: flex;
+  justify-content: center;
+  gap: 6px;
+  margin-top: 12px;
+}
+
+.pal-dot {
+  width: 7px;
+  height: 7px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: #d1d1d6;
+  cursor: pointer;
+}
+
+.pal-dot.is-active {
+  background: var(--ink);
+}
+
+/* --- the stroke card ------------------------------------------------------ */
+
+.pop-stroke {
+  min-width: 280px;
+}
+
+.sp-title {
+  font-size: 15px;
+  font-weight: 700;
+  margin-bottom: 6px;
+}
+
+.sp-slider {
+  position: relative;
+  height: 52px;
+  margin-bottom: 6px;
+}
+
+/* A row of ticks that gets denser toward the right, like the reference. */
+.sp-track {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 14px;
+  height: 16px;
+  background-image: linear-gradient(
+    to right,
+    var(--hairline) 1px,
+    transparent 1px
+  );
+  background-size: 8px 100%;
+  background-position: bottom left;
+  background-repeat: repeat-x;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.sp-bubble {
+  position: absolute;
+  top: 0;
+  transform: translateX(-50%);
+  min-width: 30px;
+  padding: 3px 7px;
+  border-radius: 9px;
+  background: var(--ink);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  text-align: center;
+  line-height: 1.2;
+  pointer-events: none;
+}
+
+.sp-range {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  width: 100%;
+  height: 44px;
+  margin: 0;
+  opacity: 0;
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+}
+
+.sp-styles {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.sty {
+  flex: 1;
+  height: 38px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-btn);
+  background: #f2f2f7;
+  color: var(--chrome);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.sty[aria-pressed="true"] {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.sty-glyph {
+  width: 24px;
+  height: 24px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.2;
+  stroke-linecap: round;
+}
+
+/* --- the more menu -------------------------------------------------------- */
+
+.pop-menu {
+  min-width: 220px;
+  padding: 8px;
+}
+
+.menu-head {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  padding: 6px 8px 4px;
+}
+
+.menu-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink);
+  font-size: 15px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.menu-item:hover {
+  background: #f2f2f7;
+}
+
+.menu-value {
+  color: var(--muted);
+  font-size: 14px;
+}
+
+/* --- toast ---------------------------------------------------------------- */
+
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: calc(28px + env(safe-area-inset-bottom));
+  transform: translate(-50%, 12px);
+  z-index: 30;
+  max-width: min(520px, 90vw);
+  padding: 11px 18px;
+  border-radius: 22px;
+  background: rgba(28, 28, 30, 0.92);
+  color: #fff;
+  font-size: 14px;
+  line-height: 1.35;
+  text-align: center;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 180ms ease, transform 180ms ease;
+}
+
+.toast.is-on {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+.toast[hidden] {
+  display: none;
+}
+
+/* --- Apple Pencil hover cursor ring --------------------------------------- */
+
 .penring {
   position: fixed;
   top: 0;
@@ -63,113 +572,8 @@ body {
   display: none;
 }
 
-/* Interactive toolbar (bar built by ui.js). The container is click-through
-   so strokes can start anywhere except on the bar itself; only the bar
-   receives pointer events. */
-.toolbar {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  z-index: 5;
-  display: flex;
-  justify-content: center;
-  pointer-events: none;
-}
+/* --- debug overlay -------------------------------------------------------- */
 
-.toolbar-bar {
-  pointer-events: auto;
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  align-items: center;
-  gap: 6px 10px;
-  max-width: 100vw;
-  padding: 6px 10px;
-  background: rgba(255, 255, 255, 0.95);
-  border-bottom: 1px solid #ddd;
-}
-
-.tgroup {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.tdiv {
-  width: 1px;
-  align-self: stretch;
-  background: #ddd;
-}
-
-.tbtn {
-  min-height: 40px;
-  min-width: 44px;
-  padding: 6px 10px;
-  font-size: 14px;
-  border: 1px solid #bbb;
-  border-radius: 8px;
-  background: #fff;
-  color: #111;
-}
-
-/* Active tool/option: inverted + semibold, not color alone (a11y). */
-.tbtn[aria-pressed="true"] {
-  background: #1b1b1b;
-  color: #fff;
-  border-color: #1b1b1b;
-  font-weight: 600;
-}
-
-.tbtn:disabled {
-  opacity: 0.35;
-}
-
-.tbtn:focus-visible {
-  outline: 2px solid #2563eb;
-  outline-offset: 2px;
-}
-
-/* Icon-only button (inline SVG, currentColor). */
-.tbtn-icon {
-  min-width: 44px;
-  width: 44px;
-  padding: 6px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.tbtn-icon svg {
-  display: block;
-  pointer-events: none;
-}
-
-.tbtn-icon svg path {
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 1.7;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
-
-.swatch {
-  width: 36px;
-  height: 36px;
-  min-width: 0;
-  padding: 0;
-  border-radius: 50%;
-  border: 2px solid #bbb;
-  background-clip: padding-box;
-}
-
-.swatch[aria-pressed="true"] {
-  border-color: #111;
-  outline: 2px solid #111;
-  outline-offset: 2px;
-}
-
-/* Debug overlay (toggled with "D"). Read-only: never interactive. */
 .debug {
   position: fixed;
   top: 8px;
@@ -187,4 +591,22 @@ body {
 
 .debug[hidden] {
   display: none;
+}
+
+/* --- narrow screens ------------------------------------------------------- */
+
+@media (max-width: 700px) {
+  .toolbar {
+    left: 8px;
+    right: 8px;
+  }
+
+  .pill-right {
+    right: 0;
+  }
+
+  .pal-grid {
+    grid-template-columns: repeat(8, 1fr);
+    gap: 8px 6px;
+  }
 }

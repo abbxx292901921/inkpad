@@ -4,7 +4,8 @@ A static, offline-capable Progressive Web App for handwritten notes
 (Notability-style), with Gemini AI help. Vanilla HTML/CSS/JS — no build step,
 no backend, no dependencies, no tracking.
 
-> Status: step 2 of 11 — pen/highlighter/eraser, colors, widths, undo/redo.
+> Status: the Notability-style editor UI is in — floating icon toolbar,
+> expandable tool island, colour card, stroke card, and file import.
 > iPad input core done: synchronous drawing, palm rejection, squeeze-to-erase,
 > Pencil hover ring.
 
@@ -31,18 +32,27 @@ The workflow (`.github/workflows/deploy.yml`) publishes the folder as-is minus
 `.git` and `.github`. All paths in `index.html` are relative, so the app works
 under a subpath like `/inkpad/`.
 
-## Use (step 2)
+## Use
 
-- Toolbar (top): Pen / Highlighter / Eraser, pen colors (4), stroke widths
-  (per-tool), Undo / Redo. The bar is touch-sized (40px targets).
-- Eraser deletes whole strokes it touches; everything is undoable.
-- The last toolbar button toggles **finger drawing**. The Pencil needs no
-  pairing — Safari reports `pointerType === 'pen'` for it either way. The
-  moment any Pencil event is seen, fingers stop drawing so you can rest your
-  hand on the screen; tap the button if you *want* fingers to draw as well.
-  The choice is remembered.
+- **Toolbar** (top centre, a floating pill): Pen / Marker / Pencil / Eraser,
+  an import button, and a chevron that expands the island to reveal the
+  options row. The pill on the right has Undo / Redo, the finger-drawing
+  toggle and a "more" menu.
+- **Colours**: tap `+` in the options row for the full colour card (16
+  swatches, a colour wheel for custom colours, and a second palette page
+  that collects your custom picks).
+- **Stroke**: tap the line button in the options row for the thickness slider
+  and the four line styles (solid / hairline / dashed / dotted).
+- **Import a file**: tap `+` in the tool row and choose an image (a photo of
+  your homework works). It becomes the page background and you write on top
+  of it. PDFs need the pdf.js library, which is not vendored yet.
+- The eraser deletes whole strokes it touches; everything is undoable.
+- The Pencil needs no pairing. The moment any Pencil event is seen, fingers
+  stop drawing so you can rest your hand on the screen; tap the
+  finger-drawing button if you *want* fingers to draw as well. The choice is
+  remembered.
 - Press `D` for the debug overlay; `__inkpad` in the console exposes
-  `{ strokes, viewport, surface, history }`.
+  `{ note, page, strokes, viewport, surface, history, palettes }`.
 
 ## Add to Home Screen (iPad)
 

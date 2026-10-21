@@ -1,16 +1,17 @@
-// tools.js — tool registry: pen, highlighter, eraser.
-// canvas.js reads getCurrentTool() at pointerdown; ui.js edits per-tool
-// options via setToolOptions(). Lasso + "ask AI" register here in steps 6/8.
+// tools.js — tool registry.
 //
-// Tool shape: { id, name, kind: 'ink' | 'eraser', options }
-//   ink options:    { color, width }
+// Tool shape: { id, name, kind: 'ink' | 'eraser', icon, options, widthRange }
+//   ink options:    { color, width, opacity, lineStyle, pressureTaper }
 //   eraser options: { radius }   (page-coordinate hit radius)
+//
+// The toolbar is built from the registry, so adding a tool here is enough to
+// make it appear in the UI. Lasso / shapes / "ask AI" register here later.
 
-export const PEN_COLORS = ['#1b1b1b', '#2563eb', '#dc2626', '#16a34a'];
-export const PEN_WIDTHS = [2, 3, 5];
-export const HIGHLIGHTER_WIDTHS = [10, 14, 20];
-export const HIGHLIGHTER_COLOR = '#ffeb3b';
-export const HIGHLIGHTER_OPACITY = 0.5;
+export const QUICK_COLORS = [
+  '#000000', '#0a84ff', '#34c759', '#ff3b30', '#af52de', '#ffffff',
+];
+
+export const LINE_STYLE_SOLID = 'solid';
 
 const registry = new Map();
 let currentId = 'pen';
@@ -21,6 +22,10 @@ export function registerTool(id, def) {
 
 export function getTool(id) {
   return registry.get(id);
+}
+
+export function getTools() {
+  return [...registry.values()];
 }
 
 export function getCurrentTool() {
@@ -43,22 +48,51 @@ export function setToolOptions(id, patch) {
   Object.assign(t.options, patch);
 }
 
+export function getWidthRange(id) {
+  const t = registry.get(id);
+  return t?.widthRange ?? { min: 1, max: 20 };
+}
+
+// A translucent tool cannot use a dashed/dotted style: textured strokes
+// re-stroke their whole path as you draw, which would stack the alpha and
+// make the marker darken. The marker is therefore always a solid band.
+export function supportsLineStyle(id) {
+  const t = registry.get(id);
+  if (!t) return false;
+  if (t.kind !== 'ink') return false;
+  return (t.options.opacity ?? 1) >= 1;
+}
+
 registerTool('pen', {
   name: 'Pen',
   kind: 'ink',
-  options: { color: PEN_COLORS[0], width: 3, opacity: 1 },
+  icon: 'pen',
+  // Pressure-sensitive: the width follows how hard the Pencil is pressed.
+  options: { color: '#000000', width: 3, opacity: 1, lineStyle: LINE_STYLE_SOLID, pressureTaper: true },
+  widthRange: { min: 1, max: 20 },
 });
 
-registerTool('highlighter', {
-  name: 'Highlighter',
+registerTool('marker', {
+  name: 'Marker',
   kind: 'ink',
-  // Translucent marker: rendered behind ink (destination-over), never
-  // repainted, so it cannot darken over time.
-  options: { color: HIGHLIGHTER_COLOR, width: 14, opacity: HIGHLIGHTER_OPACITY },
+  icon: 'marker',
+  // Translucent chisel marker: constant width, drawn behind the ink.
+  options: { color: '#ffd60a', width: 18, opacity: 0.5, lineStyle: LINE_STYLE_SOLID, pressureTaper: false },
+  widthRange: { min: 6, max: 48 },
+});
+
+registerTool('pencil', {
+  name: 'Pencil',
+  kind: 'ink',
+  icon: 'pencil',
+  // Graphite: constant width, no pressure taper, opaque.
+  options: { color: '#3a3a3a', width: 2, opacity: 1, lineStyle: LINE_STYLE_SOLID, pressureTaper: false },
+  widthRange: { min: 1, max: 12 },
 });
 
 registerTool('eraser', {
   name: 'Eraser',
   kind: 'eraser',
+  icon: 'eraser',
   options: { radius: 14 },
 });

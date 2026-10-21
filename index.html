@@ -16,12 +16,22 @@
 </head>
 <body>
   <canvas id="page" aria-label="Note-taking canvas. Draw with pen, touch, or mouse."></canvas>
-  <!-- Toolbar: built by src/ui.js (interactive). -->
+
+  <!-- Toolbar: built by src/ui/toolbar.js (floating pills). -->
   <div id="toolbar" class="toolbar"></div>
+
+  <!-- File importer. Images become page layers (written on top of). -->
+  <input id="file-input" type="file" accept="image/*,application/pdf" hidden>
+
+  <!-- Transient messages. -->
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+
   <!-- Apple Pencil hover cursor ring (pointer-events: none). -->
   <div id="penring" class="penring" hidden></div>
+
   <!-- Debug overlay (key "D"). pointer-events:none via CSS. -->
   <div id="debug" class="debug" hidden></div>
+
   <script type="module" src="src/app.js"></script>
 </body>
 </html>

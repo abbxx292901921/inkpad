@@ -5,25 +5,34 @@ Inkpad: a static, offline-capable PWA for handwritten notes (Notability-style).
 Vanilla HTML/CSS/JS (ES modules), no build step, no backend, no dependencies.
 Runs as a static folder (GitHub Pages compatible).
 
-## Architecture (step 2 + phase B)
-- `index.html` — app shell: `<canvas id="page">`, toolbar container, debug overlay, pen ring, module entry.
-- `theme.css` — styling. Only the toolbar BAR is interactive; its full-width
-  container stays click-through (`pointer-events: none`) so strokes can start
-  anywhere. Debug overlay and pen ring are `pointer-events: none` always.
-- `src/app.js` — owns strokes array + history, wires canvas/ui hooks, pen ring.
+## Architecture (phase C1)
+- `index.html` — app shell: `<canvas id="page">`, toolbar container, file
+  input, toast, debug overlay, pen ring, module entry.
+- `theme.css` — the Notability-style design system: floating pills, the
+  expandable tool island, popover cards, colour/line-style controls. Only the
+  pills take pointer events; the full-width container stays click-through so
+  strokes can start anywhere. Debug overlay and pen ring are
+  `pointer-events: none` always.
+- `src/app.js` — owns the document (note -> pages), the undo/redo history,
+  the popovers, the file importer and the toolbar state.
 - `src/canvas.js` — Pointer Events handling + SYNCHRONOUS incremental drawing.
   Ink tools paint inside the pointermove handler; the eraser collects a path
   and calls `erasePath()`.
 - `src/strokes.js` — stroke data model (vector) + render helpers + undo/redo
   history + eraser hit-testing.
-- `src/tools.js` — tool registry: pen, highlighter, eraser. Per-tool options
-  (`{ color, width, opacity }` for ink, `{ radius }` for eraser).
-- `src/ui.js` — stateless toolbar renderer (`buildToolbar()` →
-  `update(state)`). All behavior lives in app.js callbacks.
-- `src/coord.js` — the ONLY screen<->page conversion. Nothing else touches zoom/pan/dpr.
+- `src/tools.js` — tool registry: pen, marker, pencil, eraser. Per-tool
+  options (`{ color, width, opacity, lineStyle, pressureTaper }` for ink,
+  `{ radius }` for eraser). `supportsLineStyle(id)` is false for the
+  translucent marker.
+- `src/pages.js` — the document model. A note owns pages; a page owns
+  `layers` (imported files, drawn UNDER the ink) and `strokes` (the ink).
 - `src/input.js` — pointer arbitration (pen vs finger). Owns the palm-rejection
   policy: `createInputPolicy()` for an isolated instance, `defaultInput` for the
   app. Choice persisted in `localStorage` (`inkpad.input.v1`).
+- `src/ui/` — the UI layer. `icons.js` (inline SVG icon set), `popover.js`
+  (floating panel primitive + colour wheel), `toolbar.js` (the pill + island),
+  `palette.js` (the "Colors" card), `stroke-panel.js` (the "Stroke" card).
+- `src/coord.js` — the ONLY screen<->page conversion. Nothing else touches zoom/pan/dpr.
 - `design/notability-ui-spec.md` — the Notability UI rebuild spec, transcribed
   from the user's screenshots. Source of truth for the toolbar/palette/library
   work.
@@ -32,6 +41,24 @@ Runs as a static folder (GitHub Pages compatible).
 
 Planned (later steps): `lasso.js`, `storage.js` (IndexedDB), `config.js`,
 `markdown.js`, and `src/ai/` (see "AI providers" below).
+
+## Document model
+- Note = `{ id, title, folderId, createdAt, updatedAt, pages[] }`
+- Page = `{ id, name, layers[], strokes[] }`
+- Layer = an imported file drawn UNDER the ink: `{ id, kind: 'image'|'pdf',
+  name, url, img, naturalWidth, naturalHeight, loaded }`. The blob is kept so
+  IndexedDB can store it later.
+- Render order is **layers -> strokes**. That is the whole point: importing
+  your homework and writing on top of it is the normal case.
+- v1 draws layers in SCREEN space, contain-fitted to the canvas. When
+  pan/zoom lands they become page-space objects.
+
+## File import
+- `<input id="file-input" type="file" accept="image/*,application/pdf">`,
+  hidden, opened by the `+` button in the tool island.
+- Images become a page layer immediately. PDFs are detected and refused with
+  a toast: PDF import needs **pdf.js** vendored, which needs the user's OK
+  (AGENTS.md says "no dependencies").
 
 ## AI providers (planned, phase I1)
 Multi-provider BYOK. `src/ai/` replaces the single `gemini.js`:
@@ -62,7 +89,8 @@ convert between CSS pixels (relative to canvas top-left) and page coords using
 Step 3 adds pan/zoom by mutating the viewport — no call-site changes.
 
 ## Data model
-- Stroke = `{ id, tool, color, width, opacity, pointerType, points[] }`
+- Stroke = `{ id, tool, color, width, opacity, pointerType, lineStyle,
+  pressureTaper, points[] }`
 - Point = `{ x, y, pressure, t }` (x/y in page coords)
 - Vector data, never pixels → enables undo/redo, erase, move, re-render at any zoom.
 - History: `createHistory()` + `addEntry`/`deleteEntry` inverse ops on the
@@ -74,6 +102,12 @@ Step 3 adds pan/zoom by mutating the viewport — no call-site changes.
   bbox reject), radius 14 page units. Pixel eraser is out of scope.
 - `pointerType` is stored per stroke (palm rejection needs it).
 - Pressure: `pressureOf()` treats `0`/undefined as "no data" → fallback `0.5`.
+- `pressureTaper: false` = constant width (pencil, marker).
+- `lineStyle`: `solid | hairline | dashed | dotted`. A textured stroke is
+  stroked as ONE path (`drawStrokePath`) so the dash pattern is continuous,
+  and it re-strokes that path on every move — safe because it is opaque and
+  the path prefix never changes. **A translucent stroke is never textured**,
+  or the re-stroke would stack its alpha and darken the marker.
 
 ## Rendering model (do not regress)
 `strokes.js` renders a stroke as a chain of quadratic PIECES (the
@@ -202,14 +236,17 @@ Rules:
   worker (phase E), exempt it from Safari's 7-day storage eviction.
 
 ## Known issues
-- (phase B) Strokes are in-memory only; reload loses them (IndexedDB autosave lands in step 4).
-- (phase B) No pan/zoom yet (step 3). Erase radius is in page units, tuned for zoom=1.
-- (phase B) Highlighter color is fixed yellow; swatches/widths apply to the pen.
-  Widths are per-tool (pen 2/3/5, highlighter 10/14/20).
-- (phase B) No keyboard shortcuts yet (step 11).
-- (phase C pending) The toolbar is still the step-2 flat text bar, not the
-  Notability-style floating icon pill. The target design is written up in
-  `design/notability-ui-spec.md` — that file is the spec to build against.
+- (phase C) Strokes and imported layers are in-memory only; reload loses them
+  (IndexedDB autosave lands in a later phase).
+- (phase C) No pan/zoom yet. Layer images are drawn in screen space, so they
+  do not pan/zoom with the ink yet.
+- (phase C) One page per note, and no library/folders screen yet. The Notability
+  library screen is specified in `design/notability-ui-spec.md` §7.
+- (phase C) PDF import is not wired: it needs pdf.js vendored (the user has
+  not approved a dependency yet). Images work.
+- (phase C) Shapes, lasso/transform handles, ruler and rotation dial are not
+  built yet — they are specified in `design/notability-ui-spec.md` §5-§6.
+- (phase B) No keyboard shortcuts yet.
 - (phase B) `pointerrawupdate` is not available in Safari/iPadOS, so latency on
   iPad relies on synchronous painting rather than raw pointer updates.
 - (phase B) No service worker yet, so the app is not offline-capable and does

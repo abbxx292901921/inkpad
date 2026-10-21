@@ -40,11 +40,14 @@ import {
   drawPieces,
   drawDot,
   drawTail,
+  drawStrokePath,
   isTranslucent,
+  isTextured,
   renderStroke,
 } from './strokes.js';
 import { getCurrentTool } from './tools.js';
 import { defaultInput } from './input.js';
+import { containFit } from './pages.js';
 
 const PEN_ERASER_BIT = 32; // pen eraser end (Pointer Events spec)
 const PEN_BARREL_BIT = 2; // pen barrel / side button
@@ -92,12 +95,40 @@ export function createDrawingSurface(canvas, viewport, hooks) {
     ctx.restore();
   }
 
-  // Full repaint: committed strokes, then any stroke that is still in
-  // progress. The in-progress part matters — its ink is already on the canvas
-  // but it is not committed yet, so a bare committed-only redraw would wipe
-  // the line the user is drawing right now.
+  // Draw the page's background layers (imported PDF pages, photos of
+  // homework). They sit UNDER the ink, which is what makes "import the
+  // assignment and write on it" work.
+  //
+  // v1 draws layers in screen space, fitted to the visible canvas. Once
+  // pan/zoom lands they become page-space objects.
+  function drawLayers() {
+    const layers = hooks.getLayers ? hooks.getLayers() : [];
+    if (layers.length === 0) return;
+    const rect = canvas.getBoundingClientRect();
+    ctx.save();
+    ctx.setTransform(viewport.dpr, 0, 0, viewport.dpr, 0, 0);
+    for (const layer of layers) {
+      if (layer.kind !== 'image' || !layer.loaded || !layer.img) continue;
+      const fit = containFit(
+        layer.naturalWidth,
+        layer.naturalHeight,
+        0,
+        0,
+        rect.width,
+        rect.height,
+      );
+      ctx.drawImage(layer.img, fit.x, fit.y, fit.w, fit.h);
+    }
+    ctx.restore();
+  }
+
+  // Full repaint: background layers, committed strokes, then any stroke that
+  // is still in progress. The in-progress part matters — its ink is already on
+  // the canvas but it is not committed yet, so a bare committed-only redraw
+  // would wipe the line the user is drawing right now.
   function repaintAll() {
     clearDevicePixels();
+    drawLayers();
     applyTransform(ctx, viewport);
     for (const s of hooks.getStrokes()) renderStroke(ctx, s);
     for (const entry of active.values()) {
@@ -144,6 +175,15 @@ export function createDrawingSurface(canvas, viewport, hooks) {
     }
     const to = n - 2; // 1-based index of the last drawable piece
     if (to <= entry.renderedPieces) return;
+    if (isTextured(stroke)) {
+      // Dashed / dotted / hairline strokes are stroked as ONE path so the
+      // pattern is continuous. Re-stroking the whole path is safe: it is
+      // opaque and the path prefix never changes, so the pattern phase is
+      // identical and no stale pixels are left behind.
+      drawStrokePath(ctx2, stroke);
+      entry.renderedPieces = to;
+      return;
+    }
     const from = Math.max(1, entry.renderedPieces + 1);
     drawPieces(ctx2, stroke, from, to);
     entry.renderedPieces = to;
@@ -229,6 +269,8 @@ export function createDrawingSurface(canvas, viewport, hooks) {
             width: tool.options.width,
             opacity: tool.options.opacity ?? 1,
             pointerType: e.pointerType,
+            lineStyle: tool.options.lineStyle ?? 'solid',
+            pressureTaper: tool.options.pressureTaper !== false,
           }),
       erasing,
       path: [],
@@ -325,7 +367,12 @@ export function createDrawingSurface(canvas, viewport, hooks) {
       return;
     }
     applyTransform(ctx, viewport);
-    drawTail(ctx, entry.stroke);
+    if (entry.stroke && isTextured(entry.stroke)) {
+      // The textured path already includes the closing run.
+      drawStrokePath(ctx, entry.stroke);
+    } else {
+      drawTail(ctx, entry.stroke);
+    }
     const n = entry.stroke.points.length;
     if (n === 0) {
       reportDebug(e, `${kind} (discarded: no points)`, 0);
