@@ -163,10 +163,12 @@ Rules:
   platform masks.
 - The icon deliberately has NO wordmark: an iOS home screen tile is ~60pt, so
   text turns to mush. The "INKPAD" wordmark belongs in the app UI, not the icon.
-- `icons/*.png` are generated from those SVGs with headless Chrome:
-  `chrome --headless=new --window-size=W,H --screenshot=out.png <svg-with-matching-width-height>`
-  (the SVG must carry the target width/height or the capture is cropped).
-  Regenerate rather than hand-editing the PNGs.
+- `icons/*.png` are generated from those SVGs by `tools/render-icons.ps1`
+  (headless Chrome). The script rewrites width/height on the ROOT `<svg>` tag
+  only — a naive global replace also hits the background `<rect>` elements and
+  leaves the background covering only the top-left corner. The script then
+  verifies all four corners of every PNG are fully opaque. Regenerate rather
+  than hand-editing the PNGs.
 - `manifest.json` declares `display: standalone` — this is what makes an
   iOS Home Screen web app run without Safari chrome and, with the service
   worker (phase E), exempt it from Safari's 7-day storage eviction.

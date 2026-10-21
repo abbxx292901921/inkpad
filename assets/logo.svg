@@ -66,10 +66,10 @@
 
   <!-- small planets -->
   <g>
-    <circle cx="168" cy="252" r="24" fill="#2f7fd0" opacity="0.9"/>
+    <circle cx="122" cy="172" r="21" fill="#2f7fd0" opacity="0.9"/>
     <circle cx="612" cy="196" r="9" fill="#6b7689"/>
-    <circle cx="270" cy="100" r="13" fill="#2f7fd0" opacity="0.85"/>
-    <circle cx="448" cy="358" r="26" fill="#8a6a4e" opacity="0.9"/>
+    <circle cx="300" cy="86" r="12" fill="#2f7fd0" opacity="0.85"/>
+    <circle cx="452" cy="366" r="26" fill="#8a6a4e" opacity="0.9"/>
     <circle cx="60" cy="60" r="4" fill="#cfdcf5" opacity="0.7"/>
     <circle cx="470" cy="86" r="3" fill="#cfdcf5" opacity="0.5"/>
     <circle cx="118" cy="446" r="3.5" fill="#cfdcf5" opacity="0.45"/>
