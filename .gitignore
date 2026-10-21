@@ -1,0 +1,21 @@
+# Secrets — never commit API keys or key files.
+# (The Gemini API key is entered in Settings and stored in browser localStorage only.)
+.env
+.env.*
+*.key
+*.pem
+secrets/
+config/secrets.*
+
+# Dependencies (none currently — vanilla JS, no build step)
+node_modules/
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+.vscode/
+*.swp
+*.bak
+
+# Python server / misc
+__pycache__/

@@ -1,0 +1,5 @@
+# Personal app — do not index or archive.
+# This site is a private notebook app; there is nothing here for a search
+# engine or a web archive. Crawlers that honor this file will skip it.
+User-agent: *
+Disallow: /

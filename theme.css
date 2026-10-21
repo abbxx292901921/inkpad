@@ -1,0 +1,141 @@
+/* Inkpad theme — step 1: light theme only. Dark mode arrives in step 11. */
+
+:root {
+  color-scheme: light;
+  --ink: #1b1b1b;
+  --paper: #ffffff;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  overflow: hidden;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  overscroll-behavior: none;
+}
+
+#page {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  /* Critical: without this the browser hijacks touch for scroll/zoom
+     and strokes cut off mid-line. */
+  touch-action: none;
+  cursor: crosshair;
+  background: var(--paper);
+}
+
+/* Interactive toolbar (bar built by ui.js). The container is click-through
+   so strokes can start anywhere except on the bar itself; only the bar
+   receives pointer events. */
+.toolbar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 5;
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.toolbar-bar {
+  pointer-events: auto;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  gap: 6px 10px;
+  max-width: 100vw;
+  padding: 6px 10px;
+  background: rgba(255, 255, 255, 0.95);
+  border-bottom: 1px solid #ddd;
+}
+
+.tgroup {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.tdiv {
+  width: 1px;
+  align-self: stretch;
+  background: #ddd;
+}
+
+.tbtn {
+  min-height: 40px;
+  min-width: 44px;
+  padding: 6px 10px;
+  font-size: 14px;
+  border: 1px solid #bbb;
+  border-radius: 8px;
+  background: #fff;
+  color: #111;
+}
+
+/* Active tool/option: inverted + semibold, not color alone (a11y). */
+.tbtn[aria-pressed="true"] {
+  background: #1b1b1b;
+  color: #fff;
+  border-color: #1b1b1b;
+  font-weight: 600;
+}
+
+.tbtn:disabled {
+  opacity: 0.35;
+}
+
+.tbtn:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 2px;
+}
+
+.swatch {
+  width: 36px;
+  height: 36px;
+  min-width: 0;
+  padding: 0;
+  border-radius: 50%;
+  border: 2px solid #bbb;
+  background-clip: padding-box;
+}
+
+.swatch[aria-pressed="true"] {
+  border-color: #111;
+  outline: 2px solid #111;
+  outline-offset: 2px;
+}
+
+/* Debug overlay (toggled with "D"). Read-only: never interactive. */
+.debug {
+  position: fixed;
+  top: 8px;
+  left: 8px;
+  z-index: 10;
+  pointer-events: none;
+  white-space: pre-wrap;
+  font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  background: rgba(0, 0, 0, 0.72);
+  color: #fff;
+  padding: 6px 8px;
+  border-radius: 6px;
+  max-width: 92vw;
+}
+
+.debug[hidden] {
+  display: none;
+}
