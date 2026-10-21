@@ -21,6 +21,14 @@ Runs as a static folder (GitHub Pages compatible).
 - `src/ui.js` — stateless toolbar renderer (`buildToolbar()` →
   `update(state)`). All behavior lives in app.js callbacks.
 - `src/coord.js` — the ONLY screen<->page conversion. Nothing else touches zoom/pan/dpr.
+- `src/input.js` — pointer arbitration (pen vs finger). Owns the palm-rejection
+  policy: `createInputPolicy()` for an isolated instance, `defaultInput` for the
+  app. Choice persisted in `localStorage` (`inkpad.input.v1`).
+- `design/notability-ui-spec.md` — the Notability UI rebuild spec, transcribed
+  from the user's screenshots. Source of truth for the toolbar/palette/library
+  work.
+- `design/oss-references.md` — survey of open-source reference projects with
+  their licences, and which ones are off limits.
 
 Planned (later steps): `lasso.js`, `storage.js` (IndexedDB), `config.js`,
 `markdown.js`, and `src/ai/` (see "AI providers" below).
@@ -92,10 +100,14 @@ Rules:
 - `getCoalescedEvents()` in `pointermove` for smooth fast strokes.
 - `setPointerCapture()` on `pointerdown`; `pointercancel`/`lostpointercapture` finish or discard.
 - Mouse: only button 0 draws. One active stroke per pointerId.
-- `drawStrokeRange(ctx, stroke, drawnChunks)` draws only segments AFTER
-  `drawnChunks` (segment i joins point i-1 to point i) and returns the new
-  count. Re-drawing an already-painted segment would stack a translucent
-  stroke's alpha and make the highlighter darker on every repaint.
+- `drawPieces(ctx, stroke, from, to)` paints ONLY pieces `from..to` (1-based) of
+  the midpoint-forward chain; `drawTail(ctx, stroke)` paints the final segment.
+  `renderStroke(ctx, stroke)` is the full-redraw path for one stroke. Re-drawing
+  an already-painted piece would stack a translucent stroke's alpha and make the
+  highlighter darker on every repaint.
+- `repaintAll()` (inside the surface) redraws committed strokes AND any stroke
+  that is still in progress. A committed-only redraw would wipe the line the
+  user is drawing right now, so never replace it with a committed-only repaint.
 
 ## iPad / Apple Pencil rules (phase B)
 - **Draw SYNCHRONOUSLY inside the pointermove handler.** iPadOS Safari drops
@@ -104,9 +116,25 @@ Rules:
   handler must stay cheap: one small path per event.
 - `pointerrawupdate` is NOT supported in Safari/iPadOS — do not rely on it.
   `getCoalescedEvents()` is used when available, raw event as fallback.
-- **Palm rejection**: a pen event (contact OR hover) marks the pen active for
-  `PEN_GRACE_MS` (1500ms). While active, `pointerType === 'touch'` never draws.
-  Touch is reserved for pan/zoom (phase C).
+- **Palm rejection** (see `src/input.js` — the Excalidraw "pen mode" pattern,
+  excalidraw/excalidraw#4657):
+  - `pointerType` IS `'pen'` for an Apple Pencil with NO pairing required.
+    Pairing only buys double-tap / Pencil Pro gestures.
+  - The rule is a **latch, not a timer**: once ANY pen event is seen (contact
+    OR hover), a finger never draws again for the rest of the session. The old
+    1500ms grace window expired and let the hand back in — that was the bug.
+  - `pointercancel` **DISCARDS** the stroke; it never commits. iPadOS cancels a
+    finger pointer when a pen takes over the digitizer, so a cancelled finger
+    is a hand, not ink. The old code committed on cancel — that was the main
+    source of phantom palm strokes.
+  - A finger stroke that is already in flight when the pen lands is thrown
+    away (`discardTouchStrokes()`).
+  - A touch contact whose ellipse is bigger than `PALM_CONTACT_PX` (70 CSS px)
+    is a resting palm, not a fingertip, and is ignored. iOS reports 0 when the
+    geometry is unknown; then this filter stays quiet.
+  - The user can override with the toolbar's finger-drawing toggle. An
+    explicit choice wins forever after it is made; until then the auto rule
+    applies. Persisted in `localStorage` under `inkpad.input.v1`.
 - **Squeeze / eraser end**: `buttons & 32` (or `button === 5`) = the pen's
   eraser end → erases whatever tool is selected. `buttons & 2` = barrel button
   → also erases. Switching mid-stroke commits the ink drawn so far.
@@ -178,8 +206,10 @@ Rules:
 - (phase B) No pan/zoom yet (step 3). Erase radius is in page units, tuned for zoom=1.
 - (phase B) Highlighter color is fixed yellow; swatches/widths apply to the pen.
   Widths are per-tool (pen 2/3/5, highlighter 10/14/20).
-- (phase B) No keyboard shortcuts yet (step 11). Touch still draws (palm
-  rejection only blocks touch while a pen is active); pan/zoom is step 3.
+- (phase B) No keyboard shortcuts yet (step 11).
+- (phase C pending) The toolbar is still the step-2 flat text bar, not the
+  Notability-style floating icon pill. The target design is written up in
+  `design/notability-ui-spec.md` — that file is the spec to build against.
 - (phase B) `pointerrawupdate` is not available in Safari/iPadOS, so latency on
   iPad relies on synchronous painting rather than raw pointer updates.
 - (phase B) No service worker yet, so the app is not offline-capable and does

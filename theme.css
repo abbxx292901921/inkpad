@@ -130,6 +130,29 @@ body {
   outline-offset: 2px;
 }
 
+/* Icon-only button (inline SVG, currentColor). */
+.tbtn-icon {
+  min-width: 44px;
+  width: 44px;
+  padding: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.tbtn-icon svg {
+  display: block;
+  pointer-events: none;
+}
+
+.tbtn-icon svg path {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
 .swatch {
   width: 36px;
   height: 36px;

@@ -36,13 +36,18 @@ under a subpath like `/inkpad/`.
 - Toolbar (top): Pen / Highlighter / Eraser, pen colors (4), stroke widths
   (per-tool), Undo / Redo. The bar is touch-sized (40px targets).
 - Eraser deletes whole strokes it touches; everything is undoable.
+- The last toolbar button toggles **finger drawing**. The Pencil needs no
+  pairing — Safari reports `pointerType === 'pen'` for it either way. The
+  moment any Pencil event is seen, fingers stop drawing so you can rest your
+  hand on the screen; tap the button if you *want* fingers to draw as well.
+  The choice is remembered.
 - Press `D` for the debug overlay; `__inkpad` in the console exposes
   `{ strokes, viewport, surface, history }`.
 
 ## Add to Home Screen (iPad)
 
 Open the live URL in Safari → **Share → Add to Home Screen**. The app icon is
-the sparkle-nib mark in `assets/logo.svg`; the manifest declares
+the silver rocket-pen mark in `assets/logo.svg`; the manifest declares
 `display: standalone`, so it launches full-screen without Safari chrome.
 
 The service worker (offline support) is not shipped yet — the icon and the
@@ -79,5 +84,10 @@ served over HTTPS — GitHub Pages already is.
 
 - **Settings → Apple Pencil → Scribble: Off.** Otherwise Scribble intercepts
   Pencil strokes and page gestures.
+- **Settings → Apple Pencil → Draw with Apple Pencil Only.** Optional but
+  recommended: fingers then never draw in *any* app, including Safari. Inkpad
+  has its own palm rejection, so this is belt and braces.
 - **Settings → Safari → "Prefer Page Rendering Updates near 60fps": Off.**
   Gives 120Hz pointer updates, which is what makes strokes smooth.
+- Pairing the Pencil with the iPad is **not** required for drawing. Pairing
+  only enables double-tap-to-switch and Pencil Pro squeeze/hover gestures.

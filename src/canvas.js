@@ -23,6 +23,14 @@
 // - Barrel button reports `buttons & 2` — also treated as erase.
 // - A pen that is merely hovering sends pointermove with buttons === 0; that
 //   drives the cursor ring (hooks.onPenHover) and never draws.
+//
+// PALM REJECTION (see src/input.js for the policy):
+// - `pointercancel` DISCARDS the stroke instead of committing it. iPadOS
+//   cancels a finger pointer when a pen takes over the digitizer, so a
+//   cancelled finger is a hand, not ink.
+// - Once a pen has been seen, a finger never draws (unless the user asks).
+// - A finger that was already down when the pen landed is thrown away.
+// - A touch contact much larger than a fingertip is treated as a palm.
 
 import { screenToPage, applyTransform } from './coord.js';
 import {
@@ -36,11 +44,15 @@ import {
   renderStroke,
 } from './strokes.js';
 import { getCurrentTool } from './tools.js';
+import { defaultInput } from './input.js';
 
 const PEN_ERASER_BIT = 32; // pen eraser end (Pointer Events spec)
 const PEN_BARREL_BIT = 2; // pen barrel / side button
-// A pen seen within this window keeps touch input blocked (palm rejection).
-const PEN_GRACE_MS = 1500;
+// A resting palm or knuckle reports a far larger touch contact ellipse than a
+// fingertip (roughly 15-30 CSS px for a fingertip, 80+ for a resting palm).
+// Anything above this is treated as a palm, not a fingertip. iOS reports 0
+// when the contact geometry is unknown, in which case this filter stays quiet.
+const PALM_CONTACT_PX = 70;
 
 function coalescedList(e) {
   if (typeof e.getCoalescedEvents === 'function') {
@@ -64,14 +76,14 @@ export function createDrawingSurface(canvas, viewport, hooks) {
   // `desynchronized` asks the compositor for a low-latency surface. Not all
   // browsers honour it; it is a hint only.
   const ctx = canvas.getContext('2d', { desynchronized: true, alpha: true });
-  // pointerId -> { stroke, erasing, path[], renderedPieces, coalescedTotal }
+  // Pointer arbitration policy (pen vs finger). Injectable so tests can use
+  // an isolated instance instead of the app-wide default.
+  const policy = hooks.input ?? defaultInput;
+  // pointerId -> { stroke, erasing, path[], renderedPieces, coalescedTotal,
+  //                pointerType }
   const active = new Map();
   let debugOn = false;
   let lastPenAt = 0; // timestamp of the most recent pen event (hover or contact)
-
-  function penRecentlyActive(now) {
-    return now - lastPenAt < PEN_GRACE_MS;
-  }
 
   function clearDevicePixels() {
     ctx.save();
@@ -80,10 +92,24 @@ export function createDrawingSurface(canvas, viewport, hooks) {
     ctx.restore();
   }
 
-  function redraw() {
+  // Full repaint: committed strokes, then any stroke that is still in
+  // progress. The in-progress part matters — its ink is already on the canvas
+  // but it is not committed yet, so a bare committed-only redraw would wipe
+  // the line the user is drawing right now.
+  function repaintAll() {
     clearDevicePixels();
     applyTransform(ctx, viewport);
     for (const s of hooks.getStrokes()) renderStroke(ctx, s);
+    for (const entry of active.values()) {
+      if (!entry.stroke || entry.erasing) continue;
+      entry.renderedPieces = 0;
+      applyTransform(ctx, viewport);
+      paintNewPieces(ctx, entry.stroke, entry);
+    }
+  }
+
+  function redraw() {
+    repaintAll();
   }
 
   function resize() {
@@ -134,9 +160,40 @@ export function createDrawingSurface(canvas, viewport, hooks) {
         `phase=${phase} type=${e.pointerType} id=${e.pointerId} button=${e.button} buttons=${e.buttons}`,
         `screen=(${sx.toFixed(1)}, ${sy.toFixed(1)})  page=(${p.x.toFixed(1)}, ${p.y.toFixed(1)})`,
         `pressure=${pressureOf(e).toFixed(3)} coalesced=${coalescedCount} zoom=${viewport.zoom} pan=(${viewport.panX},${viewport.panY}) dpr=${viewport.dpr}`,
-        `strokes=${hooks.getStrokes().length} active=${active.size} pen=${penRecentlyActive(performance.now()) ? 'yes' : 'no'}`,
+        `strokes=${hooks.getStrokes().length} active=${active.size} pen=${policy.isPenDetected() ? 'seen' : 'no'} finger=${policy.fingerDrawingEnabled() ? 'on' : 'off'}`,
       ].join('\n'),
     );
+  }
+
+  // A finger may draw only when the user has finger drawing enabled AND the
+  // contact is small enough to be a fingertip rather than a resting palm.
+  function touchMayDraw(e) {
+    if (!policy.fingerDrawingEnabled()) return false;
+    return !isPalmContact(e);
+  }
+
+  function isPalmContact(e) {
+    const w = e.width || 0;
+    const h = e.height || 0;
+    if (w <= 0 && h <= 0) return false; // geometry unknown -> do not guess
+    return Math.max(w, h) > PALM_CONTACT_PX;
+  }
+
+  // Throw away every in-flight finger stroke. Called when a pen goes down:
+  // a hand that was already resting on the screen is not ink.
+  function discardTouchStrokes() {
+    let changed = false;
+    for (const [id, entry] of active) {
+      if (entry.pointerType !== 'touch') continue;
+      active.delete(id);
+      changed = true;
+      try {
+        if (canvas.hasPointerCapture(id)) canvas.releasePointerCapture(id);
+      } catch {
+        // ignore: capture already released
+      }
+    }
+    if (changed) repaintAll();
   }
 
   function onPointerDown(e) {
@@ -144,10 +201,13 @@ export function createDrawingSurface(canvas, viewport, hooks) {
     if (active.has(e.pointerId)) return;
 
     if (e.pointerType === 'pen') {
-      lastPenAt = performance.now();
-    } else if (e.pointerType === 'touch' && penRecentlyActive(performance.now())) {
-      // PALM REJECTION: a pen has been seen recently, so a finger is a palm
-      // resting on the screen — it must not draw.
+      // A pen landing means any finger on the screen is a hand. Arm the
+      // palm-rejection rule and throw away a hand that was already down.
+      policy.notePenSeen();
+      discardTouchStrokes();
+    } else if (e.pointerType === 'touch' && !touchMayDraw(e)) {
+      // PALM REJECTION: either a pen has been seen (so a finger is a resting
+      // hand) or the contact is too large to be a fingertip.
       reportDebug(e, 'down (ignored: palm rejection)', 1);
       return;
     }
@@ -174,6 +234,7 @@ export function createDrawingSurface(canvas, viewport, hooks) {
       path: [],
       renderedPieces: 0,
       coalescedTotal: 0,
+      pointerType: e.pointerType,
     };
     active.set(e.pointerId, entry);
 
@@ -194,6 +255,9 @@ export function createDrawingSurface(canvas, viewport, hooks) {
   function onPointerMove(e) {
     if (e.pointerType === 'pen') {
       lastPenAt = performance.now();
+      // Even a hovering pen arms palm rejection: once the user has picked up
+      // the pencil, a finger on the screen is a hand.
+      policy.notePenSeen();
       // Hovering (no buttons) -> show the cursor ring, never draw.
       if (e.buttons === 0) {
         const pt = toPagePoint(e);
@@ -243,6 +307,17 @@ export function createDrawingSurface(canvas, viewport, hooks) {
       if (canvas.hasPointerCapture(e.pointerId)) canvas.releasePointerCapture(e.pointerId);
     } catch {
       // ignore: capture already released
+    }
+    if (kind === 'cancel') {
+      // The browser or iPadOS took the pointer away: a gesture recogniser
+      // started, the OS cancelled a finger because a pen took over the
+      // digitizer, or the device was removed. DISCARD — committing here is
+      // exactly what makes a resting hand leave ink behind.
+      reportDebug(e, 'cancel (discarded)', 0);
+      // The stroke may already have been painted incrementally, so repaint to
+      // wipe it off the canvas.
+      repaintAll();
+      return;
     }
     if (entry.erasing) {
       reportDebug(e, `${kind} (erase path, ${entry.path.length} pts)`, 0);

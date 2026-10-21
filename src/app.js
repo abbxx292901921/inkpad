@@ -20,6 +20,11 @@ import {
   HIGHLIGHTER_WIDTHS,
 } from './tools.js';
 import { buildToolbar } from './ui.js';
+import {
+  fingerDrawingEnabled,
+  toggleFingerDrawing,
+  subscribeInput,
+} from './input.js';
 
 const canvas = document.getElementById('page');
 const debugEl = document.getElementById('debug');
@@ -94,6 +99,7 @@ function syncUI() {
     showColors: tool.id === 'pen',
     canUndo: history.canUndo,
     canRedo: history.canRedo,
+    fingerDrawing: fingerDrawingEnabled(),
   });
   canvas.style.cursor = tool.id === 'eraser' ? 'pointer' : 'crosshair';
 }
@@ -124,7 +130,15 @@ const toolbar = buildToolbar(toolbarEl, {
       syncUI();
     }
   },
+  onToggleFingerDrawing: () => {
+    toggleFingerDrawing();
+    syncUI();
+  },
 });
+
+// Palm rejection arms itself the moment a pen is seen, so the toolbar
+// button has to follow the policy, not the other way round.
+subscribeInput(() => syncUI());
 
 function setDebug(on) {
   debugOn = on;

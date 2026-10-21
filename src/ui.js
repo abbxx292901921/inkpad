@@ -32,6 +32,36 @@ function divider() {
   return d;
 }
 
+// Inline SVG icons (no network, no icon font). 24x24 viewBox, currentColor.
+function svgIcon(paths, extra = {}) {
+  const NS = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(NS, 'svg');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('width', '20');
+  svg.setAttribute('height', '20');
+  svg.setAttribute('aria-hidden', 'true');
+  svg.setAttribute('focusable', 'false');
+  for (const d of paths) {
+    const p = document.createElementNS(NS, 'path');
+    p.setAttribute('d', d);
+    svg.appendChild(p);
+  }
+  if (extra.class) svg.setAttribute('class', extra.class);
+  return svg;
+}
+
+// A pen nib. Used for the "pen only" state of the finger-drawing toggle.
+const ICON_NIB = [
+  'M12 2.5 L18.5 9 L12 21.5 L5.5 9 Z',
+  'M12 2.5 L12 21.5',
+];
+// A pen nib plus a fingertip dot: "pen and finger".
+const ICON_NIB_FINGER = [
+  'M13.5 2.5 L19 8 L13.5 18.5 L8 8 Z',
+  'M13.5 2.5 L13.5 18.5',
+  'M4.5 15 m-2.2 0 a2.2 2.2 0 1 0 4.4 0 a2.2 2.2 0 1 0 -4.4 0',
+];
+
 export function buildToolbar(root, actions) {
   const bar = el('div', 'toolbar-bar');
   bar.setAttribute('role', 'toolbar');
@@ -87,6 +117,16 @@ export function buildToolbar(root, actions) {
   histGroup.appendChild(redoBtn);
   bar.appendChild(histGroup);
 
+  // Finger-drawing toggle (palm rejection). Pressed = fingers may draw.
+  bar.appendChild(divider());
+  const inputGroup = group('Input');
+  const fingerBtn = el('button', 'tbtn tbtn-icon');
+  fingerBtn.type = 'button';
+  fingerBtn.setAttribute('aria-pressed', 'false');
+  fingerBtn.addEventListener('click', () => actions.onToggleFingerDrawing());
+  inputGroup.appendChild(fingerBtn);
+  bar.appendChild(inputGroup);
+
   root.appendChild(bar);
 
   function rebuildWidths(widths) {
@@ -114,6 +154,24 @@ export function buildToolbar(root, actions) {
       for (const { w, btn } of widthBtns) btn.setAttribute('aria-pressed', String(w === state.width));
       undoBtn.disabled = !state.canUndo;
       redoBtn.disabled = !state.canRedo;
+
+      // Finger-drawing toggle.
+      const fingerOn = !!state.fingerDrawing;
+      fingerBtn.setAttribute('aria-pressed', String(fingerOn));
+      fingerBtn.title = fingerOn
+        ? 'Finger drawing ON — fingers draw as well as the Pencil. Tap for pen only.'
+        : 'Pen only — fingers are ignored (palm rejection). Tap to allow finger drawing.';
+      fingerBtn.setAttribute('aria-label', fingerBtn.title);
+      const wantPaths = fingerOn ? ICON_NIB_FINGER : ICON_NIB;
+      const cur = fingerBtn.querySelector('svg');
+      const curKey = cur ? cur.getAttribute('data-icon') : null;
+      const wantKey = fingerOn ? 'nib-finger' : 'nib';
+      if (curKey !== wantKey) {
+        fingerBtn.textContent = '';
+        const icon = svgIcon(wantPaths);
+        icon.setAttribute('data-icon', wantKey);
+        fingerBtn.appendChild(icon);
+      }
     },
   };
 }
