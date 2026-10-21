@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<title>Inkpad — logo sketch pad</title>
+<style>
+  :root { color-scheme: dark; --bg: #0e0e1f; --panel: #1a1a30; --line: #33334d; --text: #e8e8f5; }
+  * { box-sizing: border-box; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); color: var(--text);
+               font-family: system-ui, -apple-system, "Segoe UI", sans-serif; overscroll-behavior: none; }
+  #pad { position: fixed; inset: 0; touch-action: none; display: block; }
+  .checker { position: fixed; inset: 0; pointer-events: none; display: none;
+    background-image: linear-gradient(45deg, #1c1c30 25%, transparent 25%), linear-gradient(-45deg, #1c1c30 25%, transparent 25%),
+      linear-gradient(45deg, transparent 75%, #1c1c30 75%), linear-gradient(-45deg, transparent 75%, #1c1c30 75%);
+    background-size: 24px 24px; background-position: 0 0, 0 12px, 12px -12px, -12px 0; }
+  .checker.on { display: block; }
+  .panel { position: fixed; left: 0; right: 0; bottom: 0; z-index: 5; display: flex; flex-wrap: wrap; gap: 8px;
+            align-items: center; justify-content: center; padding: 8px 10px calc(8px + env(safe-area-inset-bottom));
+            background: rgba(20,20,38,.94); border-top: 1px solid var(--line); }
+  .panel.top { top: 0; bottom: auto; border-top: none; border-bottom: 1px solid var(--line); }
+  button { font: inherit; color: var(--text); background: #262640; border: 1px solid var(--line); border-radius: 10px;
+           min-height: 42px; min-width: 44px; padding: 8px 12px; }
+  button:active { transform: translateY(1px); }
+  button.on { background: #4a4aff; border-color: #6f6fff; font-weight: 600; }
+  .sw { width: 42px; height: 42px; min-width: 42px; padding: 0; border-radius: 50%; border: 2px solid #55556f; }
+  .sw.on { outline: 3px solid #fff; outline-offset: 2px; }
+  .hint { position: fixed; top: 66px; left: 50%; transform: translateX(-50%); z-index: 4; pointer-events: none;
+          background: rgba(0,0,0,.6); padding: 6px 12px; border-radius: 8px; font-size: 13px; text-align: center; max-width: 90vw; }
+  .lbl { font-size: 12px; opacity: .7; padding: 0 2px; }
+  #ref { position: fixed; inset: 0; z-index: 1; pointer-events: none; display: none; background-size: contain;
+         background-position: center; background-repeat: no-repeat; opacity: .35; }
+</style>
+</head>
+<body>
+<div class="checker" id="checker"></div>
+<img id="ref" alt="">
+<canvas id="pad"></canvas>
+<div class="hint">Draw your icon with the Pencil &rarr; <b>Download PNG</b> &rarr; attach it to the chat</div>
+
+<div class="panel top">
+  <span class="lbl">Ink</span>
+  <button class="sw on" data-c="#111111" style="background:#111"></button>
+  <button class="sw" data-c="#ffffff" style="background:#fff"></button>
+  <button class="sw" data-c="#e07a5f" style="background:#e07a5f"></button>
+  <button class="sw" data-c="#8b93f8" style="background:#8b93f8"></button>
+  <button class="sw" data-c="#dc2626" style="background:#dc2626"></button>
+  <button class="sw" data-c="#ffeb3b" style="background:#ffeb3b"></button>
+  <span class="lbl">Size</span>
+  <button class="w on" data-w="6">6</button>
+  <button class="w" data-w="12">12</button>
+  <button class="w" data-w="22">22</button>
+  <button class="w" data-w="36">36</button>
+  <button class="w" data-w="54">54</button>
+</div>
+
+<div class="panel">
+  <button id="bg">BG: dark</button>
+  <button id="undo">Undo</button>
+  <button id="clear">Clear</button>
+  <button id="refbtn">Ref image</button>
+  <button id="cp">Copy PNG</button>
+  <button id="dl" style="background:#4a4aff;border-color:#6f6fff;font-weight:600">Download PNG</button>
+  <input type="file" id="file" accept="image/*" hidden>
+</div>
+
+<script>
+const pad = document.getElementById('pad');
+const ctx = pad.getContext('2d');
+const checker = document.getElementById('checker');
+const refImg = document.getElementById('ref');
+
+let color = '#111111';
+let width = 12;
+let bgMode = 'dark';           // dark | white | transparent
+const undoStack = [];
+
+function fit() {
+  const dpr = window.devicePixelRatio || 1;
+  const r = pad.getBoundingClientRect();
+  pad.width = Math.max(1, Math.round(r.width * dpr));
+  pad.height = Math.max(1, Math.round(r.height * dpr));
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  repaint();
+}
+
+let bgColor = '#0e0e1f';
+function repaint() {
+  const r = pad.getBoundingClientRect();
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, pad.width, pad.height);
+  ctx.restore();
+  if (bgMode === 'dark') { ctx.fillStyle = bgColor; ctx.fillRect(0, 0, r.width, r.height); }
+  if (bgMode === 'white') { ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, r.width, r.height); }
+  checker.classList.toggle('on', bgMode === 'transparent');
+  // reference image (guidance layer, not exported)
+  if (refImg.naturalWidth) {
+    const s = Math.min(r.width / refImg.naturalWidth, r.height / refImg.naturalHeight) * 0.9;
+    const w = refImg.naturalWidth * s, h = refImg.naturalHeight * s;
+    ctx.globalAlpha = 0.4;
+    ctx.drawImage(refImg, (r.width - w) / 2, (r.height - h) / 2, w, h);
+    ctx.globalAlpha = 1;
+  }
+  // replay strokes
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  for (const s of strokes) {
+    ctx.strokeStyle = s.color;
+    for (const seg of s.segs) {
+      ctx.beginPath();
+      ctx.lineWidth = seg.w;
+      ctx.moveTo(seg.x0, seg.y0);
+      ctx.lineTo(seg.x1, seg.y1);
+      ctx.stroke();
+    }
+  }
+}
+
+const strokes = [];
+let cur = null;
+let last = null;
+
+function pressure(e) {
+  const p = e.pressure;
+  return (typeof p === 'number' && p > 0) ? Math.min(p, 1) : 0.5;
+}
+
+pad.addEventListener('pointerdown', (e) => {
+  if (e.pointerType === 'mouse' && e.button !== 0) return;
+  pad.setPointerCapture(e.pointerId);
+  const r = pad.getBoundingClientRect();
+  const x = e.clientX - r.left, y = e.clientY - r.top;
+  cur = { color, segs: [] };
+  strokes.push(cur);
+  last = { x, y };
+  e.preventDefault();
+});
+
+pad.addEventListener('pointermove', (e) => {
+  if (!cur) return;
+  const r = pad.getBoundingClientRect();
+  const x = e.clientX - r.left, y = e.clientY - r.top;
+  const w = Math.max(1, width * (e.pointerType === 'pen' ? pressure(e) : 1));
+  cur.segs.push({ x0: last.x, y0: last.y, x1: x, y1: y, w });
+  ctx.strokeStyle = color;
+  ctx.lineWidth = w;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  ctx.beginPath();
+  ctx.moveTo(last.x, last.y);
+  ctx.lineTo(x, y);
+  ctx.stroke();
+  last = { x, y };
+  e.preventDefault();
+});
+
+function endStroke() { cur = null; last = null; }
+pad.addEventListener('pointerup', endStroke);
+pad.addEventListener('pointercancel', endStroke);
+pad.addEventListener('lostpointercapture', endStroke);
+
+document.querySelectorAll('.sw').forEach((b) => b.addEventListener('click', () => {
+  document.querySelectorAll('.sw').forEach((o) => o.classList.remove('on'));
+  b.classList.add('on');
+  color = b.dataset.c;
+}));
+document.querySelectorAll('.w').forEach((b) => b.addEventListener('click', () => {
+  document.querySelectorAll('.w').forEach((o) => o.classList.remove('on'));
+  b.classList.add('on');
+  width = Number(b.dataset.w);
+}));
+
+const bgs = ['dark', 'white', 'transparent'];
+const bgBtn = document.getElementById('bg');
+bgBtn.addEventListener('click', () => {
+  bgMode = bgs[(bgs.indexOf(bgMode) + 1) % bgs.length];
+  bgBtn.textContent = 'BG: ' + bgMode;
+  repaint();
+});
+
+document.getElementById('undo').addEventListener('click', () => { strokes.pop(); repaint(); });
+document.getElementById('clear').addEventListener('click', () => { strokes.length = 0; repaint(); });
+
+const fileInput = document.getElementById('file');
+document.getElementById('refbtn').addEventListener('click', () => fileInput.click());
+fileInput.addEventListener('change', () => {
+  const f = fileInput.files && fileInput.files[0];
+  if (!f) return;
+  const url = URL.createObjectURL(f);
+  refImg.onload = () => { refImg.style.display = 'block'; repaint(); };
+  refImg.src = url;
+});
+
+// Export the ART ONLY (no background, no reference) at 2x, transparent PNG.
+function renderArt(target, scale) {
+  const o = target.getContext('2d');
+  o.setTransform(scale, 0, 0, scale, 0, 0);
+  o.clearRect(0, 0, target.width / scale, target.height / scale);
+  o.lineCap = 'round';
+  o.lineJoin = 'round';
+  for (const s of strokes) {
+    o.strokeStyle = s.color;
+    for (const seg of s.segs) {
+      o.beginPath();
+      o.lineWidth = seg.w;
+      o.moveTo(seg.x0, seg.y0);
+      o.lineTo(seg.x1, seg.y1);
+      o.stroke();
+    }
+  }
+}
+
+function artBlob() {
+  const out = document.createElement('canvas');
+  out.width = pad.width * 2;
+  out.height = pad.height * 2;
+  renderArt(out, 2);
+  return new Promise((res) => out.toBlob(res, 'image/png'));
+}
+
+document.getElementById('dl').addEventListener('click', async () => {
+  const blob = await artBlob();
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'inkpad-sketch.png';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+});
+
+const copyBtn = document.getElementById('cp');
+copyBtn.addEventListener('click', async () => {
+  const blob = await artBlob();
+  try {
+    await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+    copyBtn.textContent = 'Copied!';
+  } catch (err) {
+    copyBtn.textContent = 'Copy failed';
+    console.warn('[sketch] clipboard write failed', err);
+  }
+  setTimeout(() => { copyBtn.textContent = 'Copy PNG'; }, 2500);
+});
+
+window.addEventListener('resize', fit);
+fit();
+</script>
+</body>
+</html>
