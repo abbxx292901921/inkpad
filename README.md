@@ -5,6 +5,8 @@ A static, offline-capable Progressive Web App for handwritten notes
 no backend, no dependencies, no tracking.
 
 > Status: step 2 of 11 — pen/highlighter/eraser, colors, widths, undo/redo.
+> iPad input core done: synchronous drawing, palm rejection, squeeze-to-erase,
+> Pencil hover ring.
 
 ## Run locally
 

@@ -1,13 +1,25 @@
 // strokes.js — stroke DATA MODEL (vector, not pixels) + render helpers.
 //
-// Stroke = { id, tool, color, width, pointerType, points[] }
+// Stroke = { id, tool, color, width, opacity, pointerType, points[] }
 // Point  = { x, y, pressure, t }               (x/y in PAGE coordinates)
-// pointerType is stored on every stroke now so step 3 palm rejection
-// ("ignore touch while pen is active") needs no rewrite.
+// pointerType is stored on every stroke so palm rejection (ignore touch while
+// the pen is active) needs no rewrite.
 //
-// Rendering: midpoint-quadratic chunks, one chunk per point-to-point segment,
-// each stroked with its own width (avg pressure × base width) so pressure
-// tapers visibly along the line. round caps/joins hide the seams.
+// RENDERING MODEL — "midpoint-forward" incremental pieces.
+// The smooth path through p0..pn-1 is a chain of quadratic pieces:
+//   piece 1:  p0                     --(control p1)-->  mid(p1,p2)
+//   piece i:  mid(p[i-1],p[i])       --(control p[i])--> mid(p[i],p[i+1])
+//   tail:     mid(p[n-2],p[n-1])     -->                p[n-1]
+// Properties that matter:
+//  * piece i becomes drawable only when p[i+1] arrives, so each piece is
+//    painted EXACTLY ONCE. Consecutive pieces share an endpoint, so the stroke
+//    is continuous with no gap at the tip (the old scheme re-painted the tip
+//    segment and left a half-segment gap).
+//  * Because nothing is ever re-painted, a translucent stroke (highlighter)
+//    cannot stack its own alpha and darken.
+//  * Translucent strokes batch a whole pointermove batch into ONE path
+//    (butt caps) so joints do not double-composite; opaque strokes may use
+//    round caps and a per-piece width (pressure taper).
 
 let nextId = 1;
 
@@ -23,8 +35,14 @@ function makeId() {
   return `stroke-${Date.now()}-${nextId}`;
 }
 
-export function createStroke({ tool = 'pen', color = '#1b1b1b', width = 3, pointerType = 'mouse' } = {}) {
-  return { id: makeId(), tool, color, width, pointerType, points: [] };
+export function createStroke({
+  tool = 'pen',
+  color = '#1b1b1b',
+  width = 3,
+  opacity = 1,
+  pointerType = 'mouse',
+} = {}) {
+  return { id: makeId(), tool, color, width, opacity, pointerType, points: [] };
 }
 
 export function addPoint(stroke, x, y, pressure) {
@@ -40,70 +58,135 @@ export function pressureOf(rawEvent) {
   return Math.min(p, 1);
 }
 
-function midpoint(a, b) {
+function mid(a, b) {
   return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
 }
 
-// Number of drawable chunks in a stroke: one per segment (n points -> n-1).
-export function chunkCount(stroke) {
-  return Math.max(0, stroke.points.length - 1);
+// True when the stroke is translucent (highlighter). Translucent strokes are
+// drawn behind existing ink (destination-over) and must never repaint.
+export function isTranslucent(stroke) {
+  return (stroke.opacity ?? 1) < 1;
 }
 
-// Full redraw of one stroke (used for resize / full repaints).
-export function renderStroke(ctx, stroke) {
-  drawStrokeRange(ctx, stroke, 0);
+// Piece i (1-based). Requires points i-1, i and i+1 to exist.
+function pieceAt(stroke, i) {
+  const p = stroke.points;
+  const ctrl = p[i];
+  const start = i === 1 ? p[0] : mid(p[i - 1], p[i]);
+  const end = mid(p[i], p[i + 1]);
+  const width = (stroke.width * (p[i - 1].pressure + ctrl.pressure)) / 2;
+  return {
+    sx: start.x,
+    sy: start.y,
+    cx: ctrl.x,
+    cy: ctrl.y,
+    ex: end.x,
+    ey: end.y,
+    width,
+  };
 }
 
-// Draw the segments not yet drawn. `drawnChunks` = how many segments are
-// already on the canvas; segment i (1..n-1) joins point i-1 to point i.
-// Returns the new drawn-chunk count, to be passed back as `drawnChunks`.
-// NOTE: never re-draws an already-painted segment — a translucent stroke
-// (highlighter) would stack its own alpha and get darker on every repaint.
-export function drawStrokeRange(ctx, stroke, drawnChunks) {
-  const pts = stroke.points;
-  if (pts.length === 0) return 0;
-
-  // Single-point stroke (a tap): draw a dot.
-  if (pts.length === 1) {
-    const r = Math.max(0.5, (stroke.width * pts[0].pressure) / 2);
-    ctx.save();
-    ctx.fillStyle = stroke.color;
-    ctx.beginPath();
-    ctx.arc(pts[0].x, pts[0].y, r, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.restore();
-    return 0;
-  }
-
-  const n = pts.length;
-  ctx.save();
-  ctx.lineCap = 'round';
-  ctx.lineJoin = 'round';
+function applyStyle(ctx, stroke) {
   ctx.strokeStyle = stroke.color;
-  // Highlighter paints BEHIND existing ink (destination-over), so it layers
-  // correctly both incrementally and on full repaints, with no z-order pass.
-  if (stroke.tool === 'highlighter') ctx.globalCompositeOperation = 'destination-over';
-  const start = Math.max(1, (Math.floor(drawnChunks) || 0) + 1);
-  for (let i = start; i < n; i++) {
-    const prev = pts[i - 1];
-    const cur = pts[i];
-    const s = i === 1 ? prev : midpoint(prev, cur);
-    const e = i === n - 1 ? cur : midpoint(cur, pts[i + 1]);
-    ctx.lineWidth = Math.max(0.5, (stroke.width * (prev.pressure + cur.pressure)) / 2);
+  ctx.fillStyle = stroke.color;
+  ctx.lineJoin = 'round';
+  // Translucent strokes use butt caps: consecutive batches meet exactly at the
+  // shared endpoint, so there is neither a gap nor a double-composited disc.
+  ctx.lineCap = isTranslucent(stroke) ? 'butt' : 'round';
+  ctx.globalAlpha = stroke.opacity ?? 1;
+  if (isTranslucent(stroke)) ctx.globalCompositeOperation = 'destination-over';
+}
+
+// Draw pieces [fromI..toI] (1-based, inclusive). Returns the index of the
+// next piece that would be drawn.
+export function drawPieces(ctx, stroke, fromI, toI) {
+  const n = stroke.points.length;
+  const from = Math.max(1, fromI);
+  const to = Math.min(toI, n - 2);
+  if (to < from) return from;
+
+  if (isTranslucent(stroke)) {
+    // One path for the whole batch: a single stroke() call means the alpha is
+    // applied once, so overlapping joints do not darken.
+    ctx.save();
+    applyStyle(ctx, stroke);
+    ctx.lineWidth = Math.max(0.5, stroke.width);
     ctx.beginPath();
-    ctx.moveTo(s.x, s.y);
-    ctx.quadraticCurveTo(cur.x, cur.y, e.x, e.y);
+    for (let i = from; i <= to; i++) {
+      const q = pieceAt(stroke, i);
+      if (i === from) ctx.moveTo(q.sx, q.sy);
+      ctx.quadraticCurveTo(q.cx, q.cy, q.ex, q.ey);
+    }
     ctx.stroke();
+    ctx.restore();
+  } else {
+    // Opaque ink: one stroke() per piece so the width can follow pressure.
+    for (let i = from; i <= to; i++) {
+      const q = pieceAt(stroke, i);
+      ctx.save();
+      applyStyle(ctx, stroke);
+      ctx.lineWidth = Math.max(0.5, q.width);
+      ctx.beginPath();
+      ctx.moveTo(q.sx, q.sy);
+      ctx.quadraticCurveTo(q.cx, q.cy, q.ex, q.ey);
+      ctx.stroke();
+      ctx.restore();
+    }
   }
+  return to + 1;
+}
+
+// A single-point stroke (a tap): a dot.
+export function drawDot(ctx, stroke, pt) {
+  ctx.save();
+  applyStyle(ctx, stroke);
+  const r = Math.max(0.5, (stroke.width * pt.pressure) / 2);
+  ctx.beginPath();
+  ctx.arc(pt.x, pt.y, r, 0, Math.PI * 2);
+  ctx.fill();
   ctx.restore();
-  return n - 1;
+}
+
+// The closing piece: the straight run from mid(p[n-2],p[n-1]) to the last
+// point. Also handles the 1-point (dot) and 2-point (line) cases.
+export function drawTail(ctx, stroke) {
+  const p = stroke.points;
+  const n = p.length;
+  if (n === 0) return;
+  if (n === 1) {
+    drawDot(ctx, stroke, p[0]);
+    return;
+  }
+  const s = n === 2 ? p[0] : mid(p[n - 2], p[n - 1]);
+  const e = p[n - 1];
+  const w = n === 2 ? stroke.width * p[0].pressure : (stroke.width * (p[n - 2].pressure + p[n - 1].pressure)) / 2;
+  ctx.save();
+  applyStyle(ctx, stroke);
+  ctx.lineWidth = Math.max(0.5, w);
+  ctx.beginPath();
+  ctx.moveTo(s.x, s.y);
+  ctx.lineTo(e.x, e.y);
+  ctx.stroke();
+  ctx.restore();
+}
+
+// Full redraw of one stroke (resize / undo / redo / repaint).
+export function renderStroke(ctx, stroke) {
+  const n = stroke.points.length;
+  if (n === 0) return;
+  if (n <= 2) {
+    drawTail(ctx, stroke);
+    return;
+  }
+  drawPieces(ctx, stroke, 1, n - 2);
+  drawTail(ctx, stroke);
 }
 
 // --- History (undo/redo) ---------------------------------------------------
 // Entries are inverse operations on the app's strokes array:
 //   { undo(strokes), redo(strokes) }
 // Only stroke references are stored — no pixels, no deep copies. History is
-// intentionally in-memory (not persisted in step 4's IndexedDB).
+// intentionally in-memory (not persisted).
 
 export function createHistory() {
   const undoStack = [];

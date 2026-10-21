@@ -22,6 +22,10 @@ body {
   color: var(--ink);
   font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
   overscroll-behavior: none;
+  /* iOS: stop rubber-banding / pull-to-refresh behind the canvas. */
+  position: fixed;
+  inset: 0;
+  -webkit-text-size-adjust: 100%;
 }
 
 #page {
@@ -35,6 +39,28 @@ body {
   touch-action: none;
   cursor: crosshair;
   background: var(--paper);
+  /* iOS: no text selection, no callout menu, no tap highlight. */
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Apple Pencil hover cursor ring. Never interactive. */
+.penring {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 4;
+  pointer-events: none;
+  border: 1.5px solid rgba(27, 27, 27, 0.55);
+  border-radius: 50%;
+  background: rgba(27, 27, 27, 0.06);
+  will-change: transform;
+}
+
+.penring[hidden] {
+  display: none;
 }
 
 /* Interactive toolbar (bar built by ui.js). The container is click-through

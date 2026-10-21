@@ -1,7 +1,7 @@
 // app.js — bootstrap: wire modules together. Owns the strokes array, the
 // undo/redo history, and the toolbar state.
 
-import { createViewport } from './coord.js';
+import { createViewport, pageToScreen } from './coord.js';
 import { createDrawingSurface } from './canvas.js';
 import {
   createHistory,
@@ -24,13 +24,38 @@ import { buildToolbar } from './ui.js';
 const canvas = document.getElementById('page');
 const debugEl = document.getElementById('debug');
 const toolbarEl = document.getElementById('toolbar');
+const penRingEl = document.getElementById('penring');
 
 const viewport = createViewport();
-// Strokes live in memory only for now. IndexedDB autosave arrives in step 4.
+// Strokes live in memory only for now. IndexedDB autosave lands in step 4.
 const strokes = [];
 const history = createHistory();
 
 let debugOn = false;
+
+// --- Apple Pencil cursor ring ---------------------------------------------
+// The ring follows the pen while it hovers (pointermove with buttons === 0).
+// Positioned in CSS pixels via coord.js — the only place conversions happen.
+function onPenHover(info) {
+  if (!penRingEl) return;
+  if (!info) {
+    hidePenRing();
+    return;
+  }
+  const { x, y } = info;
+  const s = pageToScreen(x, y, viewport);
+  const tool = getCurrentTool();
+  const width = tool.kind === 'eraser' ? tool.options.radius * 2 : tool.options.width;
+  const size = Math.max(8, width * viewport.zoom);
+  penRingEl.style.width = `${size}px`;
+  penRingEl.style.height = `${size}px`;
+  penRingEl.style.transform = `translate(${s.x - size / 2}px, ${s.y - size / 2}px)`;
+  penRingEl.hidden = false;
+}
+
+function hidePenRing() {
+  if (penRingEl) penRingEl.hidden = true;
+}
 
 const surface = createDrawingSurface(canvas, viewport, {
   getStrokes: () => strokes,
@@ -47,6 +72,7 @@ const surface = createDrawingSurface(canvas, viewport, {
     surface.redraw();
     syncUI();
   },
+  onPenHover,
   debug: (text) => {
     debugEl.textContent = text;
   },
@@ -112,6 +138,11 @@ window.addEventListener('keydown', (e) => {
 });
 
 window.addEventListener('resize', () => surface.resize());
+// The pen leaves the digitizer -> hide the hover ring.
+window.addEventListener('pointerout', (e) => {
+  if (e.pointerType === 'pen') hidePenRing();
+});
+window.addEventListener('blur', hidePenRing);
 
 surface.resize();
 syncUI();
