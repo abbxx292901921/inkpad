@@ -155,6 +155,18 @@ Rules:
 - `window.__inkpad` exposes `{ strokes, viewport, surface }` in the console.
 - Diagnose first (logging, overlay) before changing code.
 
+## Branding
+- `assets/logo.svg` is the source of truth for the mark (four-point sparkle whose
+  lower point is drawn out into a pen nib, coral ink splatter at the tip).
+  `assets/logo-maskable.svg` is the same mark scaled to 82% for platform masks.
+- `icons/*.png` are generated from those SVGs with headless Chrome:
+  `chrome --headless=new --window-size=W,H --screenshot=out.png <svg-with-matching-width-height>`
+  (the SVG must carry the target width/height or the capture is cropped).
+  Regenerate rather than hand-editing the PNGs.
+- `manifest.json` declares `display: standalone` — this is what makes an
+  iOS Home Screen web app run without Safari chrome and, with the service
+  worker (phase E), exempt it from Safari's 7-day storage eviction.
+
 ## Known issues
 - (phase B) Strokes are in-memory only; reload loses them (IndexedDB autosave lands in step 4).
 - (phase B) No pan/zoom yet (step 3). Erase radius is in page units, tuned for zoom=1.
@@ -164,6 +176,6 @@ Rules:
   rejection only blocks touch while a pen is active); pan/zoom is step 3.
 - (phase B) `pointerrawupdate` is not available in Safari/iPadOS, so latency on
   iPad relies on synchronous painting rather than raw pointer updates.
-- (phase B) No PWA/service worker/manifest yet, so the app cannot be added to the
-  Home Screen and Safari's 7-day storage eviction applies to any data we store.
-  Until phase E, treat the app as scratchpad only.
+- (phase B) No service worker yet, so the app is not offline-capable and does
+  not yet install as a PWA (the manifest and icons ARE shipped; only the
+  service worker is missing). Until phase E, treat it as scratchpad only.

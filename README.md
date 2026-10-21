@@ -39,6 +39,16 @@ under a subpath like `/inkpad/`.
 - Press `D` for the debug overlay; `__inkpad` in the console exposes
   `{ strokes, viewport, surface, history }`.
 
+## Add to Home Screen (iPad)
+
+Open the live URL in Safari → **Share → Add to Home Screen**. The app icon is
+the sparkle-nib mark in `assets/logo.svg`; the manifest declares
+`display: standalone`, so it launches full-screen without Safari chrome.
+
+The service worker (offline support) is not shipped yet — the icon and the
+standalone display are, so the home screen app already works, it just needs
+the network for now.
+
 ## Test on an iPad
 
 **Deployed (recommended):** open **https://abbxx292901921.github.io/inkpad/**

@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="Inkpad">
+  <title>Inkpad (maskable)</title>
+  <!-- Same mark, scaled to 82% so it survives aggressive platform masks.
+       The background stays full-bleed. -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#241a4d"/>
+      <stop offset="0.5" stop-color="#120f28"/>
+      <stop offset="1" stop-color="#07070f"/>
+    </linearGradient>
+    <radialGradient id="glow-violet" cx="0.5" cy="0.3" r="0.5">
+      <stop offset="0" stop-color="#7c6bff" stop-opacity="0.4"/>
+      <stop offset="1" stop-color="#7c6bff" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="glow-coral" cx="0.5" cy="0.82" r="0.42">
+      <stop offset="0" stop-color="#e07a5f" stop-opacity="0.35"/>
+      <stop offset="1" stop-color="#e07a5f" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="star" x1="0.4" y1="0" x2="0.6" y2="1">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="0.5" stop-color="#dbe3ff"/>
+      <stop offset="1" stop-color="#8b93f8"/>
+    </linearGradient>
+    <radialGradient id="ink" cx="0.45" cy="0.35" r="0.7">
+      <stop offset="0" stop-color="#f9c3ad"/>
+      <stop offset="0.45" stop-color="#e07a5f"/>
+      <stop offset="1" stop-color="#b9482f"/>
+    </radialGradient>
+  </defs>
+
+  <rect width="512" height="512" fill="url(#bg)"/>
+  <rect width="512" height="512" fill="url(#glow-violet)"/>
+
+  <g transform="translate(46.08 46.08) scale(0.82)">
+    <path d="M 256 84 Q 300 212 428 256 Q 300 300 256 428 Q 212 300 84 256 Q 212 212 256 84 Z"
+          fill="url(#star)"/>
+    <path d="M 256 302 L 256 398" stroke="#4a4fa8" stroke-width="8" stroke-linecap="round" opacity="0.35"/>
+    <rect width="512" height="512" fill="url(#glow-coral)"/>
+    <g stroke="url(#ink)" stroke-width="12" stroke-linecap="round" fill="none">
+      <path d="M 256 424 L 281 411"/>
+      <path d="M 256 424 L 231 411"/>
+      <path d="M 256 424 L 273 445"/>
+      <path d="M 256 424 L 239 445"/>
+      <path d="M 256 424 L 256 452"/>
+    </g>
+    <circle cx="256" cy="424" r="18" fill="url(#ink)"/>
+    <circle cx="223" cy="450" r="7" fill="#e07a5f"/>
+    <circle cx="291" cy="446" r="5.5" fill="#e07a5f"/>
+    <circle cx="208" cy="398" r="4.5" fill="#f0a58a"/>
+    <circle cx="303" cy="406" r="4" fill="#f0a58a"/>
+  </g>
+</svg>
