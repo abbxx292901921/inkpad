@@ -108,7 +108,7 @@ export function createDrawingSurface(canvas, viewport, hooks) {
     ctx.save();
     ctx.setTransform(viewport.dpr, 0, 0, viewport.dpr, 0, 0);
     for (const layer of layers) {
-      if (layer.kind !== 'image' || !layer.loaded || !layer.img) continue;
+      if (!layer.loaded || !layer.img) continue;
       const fit = containFit(
         layer.naturalWidth,
         layer.naturalHeight,

@@ -33,11 +33,13 @@ import {
 } from './input.js';
 import {
   createNote,
+  createPage,
   createImageLayer,
   addLayer,
   removeLayer,
   pageHasContent,
 } from './pages.js';
+import { rasterizePdf } from './pdf.js';
 
 const canvas = document.getElementById('page');
 const debugEl = document.getElementById('debug');
@@ -52,8 +54,13 @@ const viewport = createViewport();
 // A note owns pages. A page owns background layers (imported files) and ink.
 // The layers render UNDER the ink, so importing your homework and writing on
 // it is the normal case, not a special one.
-const note = createNote({ title: 'Untitled' });
-let page = note.pages[0];
+const state = {
+  note: createNote({ title: 'Untitled' }),
+  pageIndex: 0,
+  get page() {
+    return this.note.pages[this.pageIndex];
+  },
+};
 const history = createHistory();
 
 let debugOn = false;
@@ -110,18 +117,18 @@ function hidePenRing() {
 
 // --- drawing surface -------------------------------------------------------
 const surface = createDrawingSurface(canvas, viewport, {
-  getStrokes: () => page.strokes,
-  getLayers: () => page.layers,
+  getStrokes: () => state.page.strokes,
+  getLayers: () => state.page.layers,
   commitStroke: (stroke) => {
-    history.commit(addEntry(stroke, page.strokes.length));
-    page.strokes.push(stroke);
+    history.commit(addEntry(stroke, state.page.strokes.length));
+    state.page.strokes.push(stroke);
     syncUI();
   },
   erasePath: (path) => {
     if (path.length === 0) return;
-    const ids = eraseHitIds(page.strokes, path, getToolOptions('eraser').radius);
+    const ids = eraseHitIds(state.page.strokes, path, getToolOptions('eraser').radius);
     if (ids.length === 0) return; // hit nothing: no history entry, no repaint
-    history.commit(deleteEntry(removeStrokesById(page.strokes, ids)));
+    history.commit(deleteEntry(removeStrokesById(state.page.strokes, ids)));
     surface.redraw();
     syncUI();
   },
@@ -189,19 +196,18 @@ strokePopover.el.appendChild(strokePanel.el);
 // --- the "more" menu -------------------------------------------------------
 function buildMoreMenu() {
   morePopover.el.textContent = '';
-  const head = el('div', 'menu-head', 'Page');
-  morePopover.el.appendChild(head);
+  morePopover.el.appendChild(el('div', 'menu-head', 'Page'));
 
   const clearBtn = el('button', 'menu-item');
   clearBtn.type = 'button';
-  clearBtn.appendChild(el('span', 'menu-label', 'Clear page'));
+  clearBtn.appendChild(el('span', 'menu-label', 'Clear this page'));
   clearBtn.addEventListener('click', () => {
-    if (!pageHasContent(page)) {
+    if (!pageHasContent(state.page)) {
       toast('Nothing to clear.');
       return;
     }
-    page.strokes.length = 0;
-    for (const layer of [...page.layers]) removeLayer(page, layer.id);
+    state.page.strokes.length = 0;
+    for (const layer of [...state.page.layers]) removeLayer(state.page, layer.id);
     history.clear();
     surface.redraw();
     syncUI();
@@ -209,6 +215,15 @@ function buildMoreMenu() {
     toast('Page cleared.');
   });
   morePopover.el.appendChild(clearBtn);
+
+  const addPageBtn = el('button', 'menu-item');
+  addPageBtn.type = 'button';
+  addPageBtn.appendChild(el('span', 'menu-label', 'Add a blank page'));
+  addPageBtn.addEventListener('click', () => {
+    addBlankPage();
+    morePopover.close();
+  });
+  morePopover.el.appendChild(addPageBtn);
 
   const fingerItem = el('button', 'menu-item');
   fingerItem.type = 'button';
@@ -232,32 +247,104 @@ function buildMoreMenu() {
   });
   morePopover.el.appendChild(autoItem);
 
-  const state = fingerDrawingEnabled();
-  fingerState.textContent = state ? 'On' : 'Off';
+  const state_ = fingerDrawingEnabled();
+  fingerState.textContent = state_ ? 'On' : 'Off';
+}
+
+// --- pages -----------------------------------------------------------------
+function setPage(index) {
+  const count = state.note.pages.length;
+  if (count === 0) return;
+  const next = Math.max(0, Math.min(count - 1, index));
+  if (next === state.pageIndex) {
+    surface.redraw();
+    return;
+  }
+  state.pageIndex = next;
+  history.clear();
+  surface.redraw();
+  syncUI();
+}
+
+function addBlankPage() {
+  const page = createPage({ name: `Page ${state.note.pages.length + 1}` });
+  state.note.pages.push(page);
+  setPage(state.note.pages.length - 1);
 }
 
 // --- file import -----------------------------------------------------------
-// Import a file onto the page. Images become a background layer, so you write
-// on top of them. PDFs need the pdf.js library — ask before it is vendored.
-fileInput.addEventListener('change', () => {
-  const file = fileInput.files && fileInput.files[0];
-  fileInput.value = '';
-  if (!file) return;
-
+// Import a file onto the page.
+//
+// Images become a background layer of the current page, so you write on top
+// of them. PDFs become one page of the note per PDF page, each with the
+// rasterised page as its background.
+async function importFile(file) {
   if (file.type === 'application/pdf' || /\.pdf$/i.test(file.name)) {
-    toast('PDF import needs the pdf.js library (~4 MB). Say the word and I will vendor it.');
+    await importPdfFile(file);
     return;
   }
   if (!file.type.startsWith('image/')) {
     toast(`Cannot import "${file.name}" yet — images and PDFs are the targets.`);
     return;
   }
-
   const url = URL.createObjectURL(file);
   const layer = createImageLayer({ blob: file, url, name: file.name });
   layer.onLoad = () => surface.redraw();
-  addLayer(page, layer);
+  addLayer(state.page, layer);
   toast(`Imported ${file.name} — write on top of it.`);
+}
+
+async function importPdfFile(file) {
+  toast(`Reading ${file.name}…`, 60000);
+  try {
+    const rendered = await rasterizePdf(file, {
+      onProgress: (n, total) => toast(`Rendering page ${n} of ${total}…`, 60000),
+    });
+    if (rendered.length === 0) {
+      toast('That PDF has no pages.');
+      return;
+    }
+
+    const newPages = rendered.map((p) => {
+      const pg = createPage({ name: `Page ${p.pageNumber}` });
+      const layer = createImageLayer({
+        blob: p.blob,
+        url: p.url,
+        name: file.name,
+        kind: 'pdf',
+      });
+      layer.onLoad = () => surface.redraw();
+      pg.layers.push(layer);
+      return pg;
+    });
+
+    // A PDF into an empty note REPLACES it (no blank page 1 in front);
+    // into a note with content it is appended.
+    const only = state.note.pages[0];
+    const noteIsEmpty = state.note.pages.length === 1 && !pageHasContent(only);
+    if (noteIsEmpty) {
+      for (const layer of only.layers) removeLayer(only, layer.id);
+      state.note.pages = newPages;
+      state.pageIndex = 0;
+    } else {
+      state.note.pages.push(...newPages);
+      state.pageIndex = state.note.pages.length - newPages.length;
+    }
+    surface.redraw();
+    syncUI();
+    const word = newPages.length === 1 ? 'page' : 'pages';
+    toast(`Imported ${newPages.length} ${word} from ${file.name} — write on top.`);
+  } catch (err) {
+    console.warn('[inkpad] PDF import failed', err);
+    toast(err && err.message ? err.message : 'That PDF could not be imported.');
+  }
+}
+
+fileInput.addEventListener('change', () => {
+  const file = fileInput.files && fileInput.files[0];
+  fileInput.value = '';
+  if (!file) return;
+  importFile(file);
 });
 
 // --- toolbar ---------------------------------------------------------------
@@ -296,13 +383,13 @@ const toolbar = buildToolbar(toolbarEl, {
     strokePopover.open(anchor);
   },
   onUndo: () => {
-    if (history.undo(page.strokes)) {
+    if (history.undo(state.page.strokes)) {
       surface.redraw();
       syncUI();
     }
   },
   onRedo: () => {
-    if (history.redo(page.strokes)) {
+    if (history.redo(state.page.strokes)) {
       surface.redraw();
       syncUI();
     }
@@ -323,6 +410,8 @@ const toolbar = buildToolbar(toolbarEl, {
     openOnly(morePopover);
     morePopover.open(anchor);
   },
+  onPrevPage: () => setPage(state.pageIndex - 1),
+  onNextPage: () => setPage(state.pageIndex + 1),
 });
 
 // --- state sync ------------------------------------------------------------
@@ -358,6 +447,8 @@ function syncUI() {
     canUndo: history.canUndo,
     canRedo: history.canRedo,
     fingerDrawing: fingerDrawingEnabled(),
+    pageIndex: state.pageIndex,
+    pageCount: state.note.pages.length,
   });
   syncStrokePanel();
   if (palettePopover.isOpen()) {
@@ -405,4 +496,24 @@ setDebug(false);
 
 // Console handle for diagnosis: inspect live state with
 //   __inkpad.strokes.length, __inkpad.viewport, ...
-window.__inkpad = { note, page, strokes: page.strokes, viewport, surface, history, palettes };
+window.__inkpad = {
+  get note() {
+    return state.note;
+  },
+  get page() {
+    return state.page;
+  },
+  get pageIndex() {
+    return state.pageIndex;
+  },
+  get strokes() {
+    return state.page.strokes;
+  },
+  state,
+  viewport,
+  surface,
+  history,
+  palettes,
+  setPage,
+  importFile,
+};

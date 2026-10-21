@@ -51,13 +51,13 @@ export function createNote({ title = 'Untitled', folderId = null } = {}) {
 
 // --- layers ----------------------------------------------------------------
 
-// An imported image (a photo of your homework, a screenshot, a diagram).
-// The blob is kept so it can be written to IndexedDB later; `url` is the
-// object URL used to display it now.
-export function createImageLayer({ blob, url, name = 'image' }) {
+// An imported image (a photo of your homework, a screenshot, a diagram), or
+// a rasterised PDF page. The blob is kept so it can be written to IndexedDB
+// later; `url` is the object URL used to display it now.
+export function createImageLayer({ blob, url, name = 'image', kind = 'image' }) {
   const layer = {
     id: makeId('layer'),
-    kind: 'image',
+    kind,
     name,
     blob: blob ?? null,
     url,

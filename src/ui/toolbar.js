@@ -143,6 +143,27 @@ export function buildToolbar(root, actions) {
   rightPill.appendChild(moreBtn);
 
   bar.appendChild(rightPill);
+
+  // ------------------------------------------------------------- pages pill
+  const pagesPill = el('div', 'pill pill-pages');
+  const prevBtn = button('ticon', {
+    label: 'Previous page',
+    title: 'Previous page',
+    onClick: () => actions.onPrevPage(),
+  });
+  prevBtn.appendChild(icon('back'));
+  const pageLabel = el('span', 'page-label', '1 / 1');
+  const nextBtn = button('ticon', {
+    label: 'Next page',
+    title: 'Next page',
+    onClick: () => actions.onNextPage(),
+  });
+  nextBtn.appendChild(icon('chevronRight'));
+  pagesPill.appendChild(prevBtn);
+  pagesPill.appendChild(pageLabel);
+  pagesPill.appendChild(nextBtn);
+  bar.appendChild(pagesPill);
+
   root.appendChild(bar);
 
   // ------------------------------------------------------------------ state
@@ -189,6 +210,13 @@ export function buildToolbar(root, actions) {
         const w = Math.max(1, Math.min(6, state.width ?? 3));
         strokeGlyph.style.setProperty('--stroke-w', `${w}px`);
       }
+      // Page navigation.
+      const count = state.pageCount ?? 1;
+      const index = state.pageIndex ?? 0;
+      pageLabel.textContent = `${index + 1} / ${count}`;
+      prevBtn.disabled = index <= 0;
+      nextBtn.disabled = index >= count - 1;
+      pagesPill.hidden = count <= 1;
     },
   };
 }

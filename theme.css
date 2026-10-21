@@ -122,6 +122,23 @@ body {
   right: 0;
 }
 
+.pill-pages {
+  left: 0;
+  gap: 0;
+  padding: 2px 4px;
+}
+
+.page-label {
+  min-width: 46px;
+  text-align: center;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--chrome);
+  font-variant-numeric: tabular-nums;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
 /* --- the island (tool pill) ----------------------------------------------- */
 
 .island {
