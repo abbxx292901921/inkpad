@@ -682,6 +682,41 @@ button,
   background: #f2f2f7;
 }
 
+/* A row that is visible but not available yet: the label stays readable, the
+   value says why, and the row does not react to a tap. */
+.menu-item:disabled {
+  color: var(--muted);
+  cursor: default;
+}
+
+.menu-item:disabled:hover {
+  background: transparent;
+}
+
+/* Template and zoom presets sit under their group heading. */
+.menu-item-sub {
+  padding-left: 20px;
+  font-size: 14px;
+}
+
+/* The note's title and creation date, shown above the rename row. */
+.menu-info {
+  padding: 4px 8px 8px;
+}
+
+.menu-info-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+.menu-info-sub {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
 .menu-value {
   color: var(--muted);
   font-size: 14px;

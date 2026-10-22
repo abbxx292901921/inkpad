@@ -143,6 +143,15 @@ export function buildToolbar(root, actions) {
   aiBtn.appendChild(icon('sparkle'));
   rightPill.appendChild(aiBtn);
 
+  const pagesBtn = button('ticon', {
+    label: 'Pages',
+    title: 'Page thumbnails',
+    onClick: (e) => actions.onOpenPages?.(e.currentTarget),
+  });
+  pagesBtn.dataset.panel = 'pages';
+  pagesBtn.appendChild(icon('pages'));
+  rightPill.appendChild(pagesBtn);
+
   const fingerBtn = button('ticon', { label: 'Finger drawing', title: 'Finger drawing', onClick: () => actions.onToggleFingerDrawing() });
   rightPill.appendChild(fingerBtn);
   rightPill.appendChild(divider());

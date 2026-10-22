@@ -42,7 +42,7 @@ import {
 import { createImageLayer, addLayer, removeLayer, pageHasContent, createPage, containFit } from './pages.js';
 import { rasterizePdf } from './pdf.js';
 import { createWorkspace } from './workspace.js';
-import { downloadNoteAsPng, printNote, pageRegionToDataUrl } from './export.js';
+import { downloadPageAsPng, downloadNoteAsPng, printNote, pageRegionToDataUrl } from './export.js';
 import { registerServiceWorker } from './sw-register.js';
 import { buildAskAi } from './ui/ask-ai.js';
 import { buildTextInput } from './ui/text-input.js';
@@ -65,6 +65,7 @@ import { fetchModels } from './ai/models.js';
 import { describeKind, PROVIDER_KINDS } from './ai/providers.js';
 import { buildShapeMenu } from './ui/shape-menu.js';
 import { buildSelectMenu } from './ui/select-menu.js';
+import { buildPagesPanel } from './ui/pages-panel.js';
 import { buildTextPrompt, buildListPrompt } from './ui/prompt.js';
 import { buildSelection } from './ui/selection.js';
 import { buildRuler } from './ui/ruler.js';
@@ -84,6 +85,7 @@ import {
   docSize,
   resolvePageAt,
   PAGE_MARGIN,
+  PAGE_TEMPLATES,
   DEFAULT_PAGE_W,
   DEFAULT_PAGE_H,
 } from './layout.js';
@@ -421,58 +423,135 @@ const strokePanel = buildStrokePanel({
 });
 strokePopover.el.appendChild(strokePanel.el);
 
-// --- the "more" menu (B3) ---------------------------------------------------
+// --- more menu (B3) ---------------------------------------------------------
+// The document menu. Page-level actions live in the page sidebar; this card is
+// about exporting, printing, the sheet template, the zoom presets and the
+// note's identity.
+function menuRow(label, value, onClick, { disabled = false, sub = false } = {}) {
+  const b = el('button', `menu-item ${sub ? 'menu-item-sub' : ''}`.trim());
+  b.type = 'button';
+  b.appendChild(el('span', 'menu-label', label));
+  if (value) b.appendChild(el('span', 'menu-value', value));
+  b.disabled = disabled;
+  if (disabled) b.setAttribute('aria-disabled', 'true');
+  if (onClick && !disabled) b.addEventListener('click', onClick);
+  return b;
+}
+
+function formatCreated(ms) {
+  const n = Number(ms);
+  if (!Number.isFinite(n) || n <= 0) return 'Unknown';
+  const d = new Date(n);
+  if (Number.isNaN(d.getTime())) return 'Unknown';
+  return new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric' }).format(d);
+}
+
+// Zoom while keeping the ACTIVE page's top edge anchored at the top margin,
+// so picking a preset never drops the reader into the middle of a sheet.
+function setDocumentZoom(zoom) {
+  const pages = workspace.pages;
+  if (!pages.length) return;
+  const r = pageRect(pages, workspace.pageIndex) ?? pageRect(pages, 0);
+  viewport.zoom = clampZoom(zoom);
+  zoomPct = Math.round(viewport.zoom * 100);
+  if (r) surface.panTo({ x: 0, y: r.y - PAGE_MARGIN / viewport.zoom });
+  else surface.redraw();
+}
+
 function buildMoreMenu() {
   morePopover.el.textContent = '';
-  morePopover.el.appendChild(el('div', 'menu-head', 'This page'));
+  const note = workspace.current;
+  const page = workspace.page;
+  const rect = canvas.getBoundingClientRect();
 
-  const clearBtn = el('button', 'menu-item');
-  clearBtn.type = 'button';
-  clearBtn.appendChild(el('span', 'menu-label', 'Clear this page'));
-  clearBtn.addEventListener('click', () => {
-    const page = workspace.page;
-    if (!page || !pageHasContent(page)) {
-      toast('Nothing to clear.');
-      return;
+  // --- quick export -------------------------------------------------------
+  morePopover.el.appendChild(el('div', 'menu-head', 'Quick export'));
+  morePopover.el.appendChild(menuRow('PDF, All Pages', null, async () => {
+    morePopover.close();
+    if (!note) return;
+    try {
+      await printNote(note, { title: note.title });
+    } catch (err) {
+      console.warn('[inkpad] print failed', err);
+      toast('Could not open the print view.');
     }
-    page.strokes.length = 0;
-    for (const layer of [...page.layers]) removeLayer(page, layer.id);
-    history.clear();
-    workspace.markDirty();
-    surface.redraw();
-    syncUI();
+  }));
+
+  // --- export as ----------------------------------------------------------
+  morePopover.el.appendChild(el('div', 'menu-head', 'Export as'));
+  morePopover.el.appendChild(menuRow('PNG this page', null, async () => {
     morePopover.close();
-    toast('Page cleared.');
-  });
-  morePopover.el.appendChild(clearBtn);
-
-  const addPageBtn = el('button', 'menu-item');
-  addPageBtn.type = 'button';
-  addPageBtn.appendChild(el('span', 'menu-label', 'Add a blank page'));
-  addPageBtn.addEventListener('click', () => {
-    workspace.addPage();
-    scrollToPage(workspace.pageIndex);
+    if (!page) return;
+    try {
+      await downloadPageAsPng(page);
+      toast('Saved this page as a PNG.');
+    } catch (err) {
+      console.warn('[inkpad] PNG export failed', err);
+      toast('Could not export the PNG.');
+    }
+  }));
+  morePopover.el.appendChild(menuRow('PNG all pages', null, async () => {
     morePopover.close();
-  });
-  morePopover.el.appendChild(addPageBtn);
+    if (!note) return;
+    try {
+      await downloadNoteAsPng(note);
+      toast('Saved the pages as PNG.');
+    } catch (err) {
+      console.warn('[inkpad] PNG export failed', err);
+      toast('Could not export the PNG.');
+    }
+  }));
 
-  const resetView = el('button', 'menu-item');
-  resetView.type = 'button';
-  resetView.appendChild(el('span', 'menu-label', 'Fit page to width'));
-  resetView.appendChild(el('span', 'menu-value', `${zoomPct}%`));
-  resetView.addEventListener('click', () => {
-    fitPage();
-    zoomPct = Math.round(viewport.zoom * 100);
-    buildMoreMenu();
-  });
-  morePopover.el.appendChild(resetView);
+  // --- sharing (placeholders, deliberately disabled) ----------------------
+  morePopover.el.appendChild(el('div', 'menu-head', 'Share'));
+  for (const label of ['Publish to Gallery', 'Create link', 'Start study session']) {
+    morePopover.el.appendChild(menuRow(label, 'Coming soon', null, { disabled: true }));
+  }
 
-  morePopover.el.appendChild(el('div', 'menu-head', 'Note'));
+  // --- template -----------------------------------------------------------
+  morePopover.el.appendChild(el('div', 'menu-head', 'Template settings'));
+  const currentTemplate = page?.template ?? note?.template ?? 'lined';
+  for (const kind of PAGE_TEMPLATES) {
+    const label = kind.charAt(0).toUpperCase() + kind.slice(1);
+    morePopover.el.appendChild(menuRow(label, kind === currentTemplate ? 'On' : null, () => {
+      if (!workspace.current) return;
+      // The note's template is the default for NEW pages; the page keeps its
+      // own so an imported PDF sheet can stay blank. Setting both makes the
+      // choice visible immediately on the sheet in front of the user.
+      workspace.current.template = kind;
+      if (workspace.page) workspace.page.template = kind;
+      workspace.markDirty();
+      surface.redraw();
+      syncUI();
+      buildMoreMenu();
+    }, { sub: true }));
+  }
 
-  const renameBtn = el('button', 'menu-item');
-  renameBtn.type = 'button';
-  renameBtn.appendChild(el('span', 'menu-label', 'Rename this note'));
-  renameBtn.addEventListener('click', () => {
+  // --- view settings ------------------------------------------------------
+  morePopover.el.appendChild(el('div', 'menu-head', 'View settings'));
+  const sheet = pageSizeOf(page);
+  morePopover.el.appendChild(menuRow('Fit page', `${zoomPct}%`, () => {
+    morePopover.close();
+    if (!(rect.width > 0) || !(rect.height > 0)) return;
+    setDocumentZoom(Math.min(rect.width / sheet.w, rect.height / sheet.h));
+  }, { sub: true }));
+  morePopover.el.appendChild(menuRow('Fit width', null, () => {
+    morePopover.close();
+    if (!(rect.width > 0)) return;
+    setDocumentZoom(rect.width / sheet.w);
+  }, { sub: true }));
+  morePopover.el.appendChild(menuRow('100%', null, () => {
+    morePopover.close();
+    setDocumentZoom(1);
+  }, { sub: true }));
+
+  // --- note info ----------------------------------------------------------
+  morePopover.el.appendChild(el('div', 'menu-head', 'Note info'));
+  const info = el('div', 'menu-info');
+  info.appendChild(el('div', 'menu-info-title', note?.title || 'Untitled'));
+  info.appendChild(el('div', 'menu-info-sub', `Created: ${formatCreated(note?.createdAt)}`));
+  morePopover.el.appendChild(info);
+  morePopover.el.appendChild(menuRow('Rename note', null, () => {
     morePopover.close();
     openTextPrompt({
       title: 'Note name',
@@ -483,127 +562,7 @@ function buildMoreMenu() {
         syncUI();
       },
     });
-  });
-  morePopover.el.appendChild(renameBtn);
-
-  const folderBtn = el('button', 'menu-item');
-  folderBtn.type = 'button';
-  folderBtn.appendChild(el('span', 'menu-label', 'Move to a folder'));
-  folderBtn.addEventListener('click', () => {
-    morePopover.close();
-    openFolderPicker();
-  });
-  morePopover.el.appendChild(folderBtn);
-
-  const newFolderBtn = el('button', 'menu-item');
-  newFolderBtn.type = 'button';
-  newFolderBtn.appendChild(el('span', 'menu-label', 'New folder'));
-  newFolderBtn.addEventListener('click', () => {
-    morePopover.close();
-    openTextPrompt({
-      title: 'Folder name',
-      placeholder: 'Math 220',
-      onSubmit: async (text) => {
-        await workspace.createFolder(text);
-        toast(`Created the folder "${text}".`);
-      },
-    });
-  });
-  morePopover.el.appendChild(newFolderBtn);
-
-  const printBtn = el('button', 'menu-item');
-  printBtn.type = 'button';
-  printBtn.appendChild(el('span', 'menu-label', 'Print / Save as PDF'));
-  printBtn.addEventListener('click', async () => {
-    morePopover.close();
-    if (!workspace.current) return;
-    try {
-      await printNote(workspace.current, { title: workspace.current.title });
-    } catch (err) {
-      console.warn('[inkpad] print failed', err);
-      toast('Could not open the print view.');
-    }
-  });
-  morePopover.el.appendChild(printBtn);
-
-  const pngBtn = el('button', 'menu-item');
-  pngBtn.type = 'button';
-  pngBtn.appendChild(el('span', 'menu-label', 'Download as PNG'));
-  pngBtn.addEventListener('click', async () => {
-    morePopover.close();
-    if (!workspace.current) return;
-    try {
-      await downloadNoteAsPng(workspace.current);
-      toast('Saved the pages as PNG.');
-    } catch (err) {
-      console.warn('[inkpad] PNG export failed', err);
-      toast('Could not export the PNG.');
-    }
-  });
-  morePopover.el.appendChild(pngBtn);
-
-  const deleteBtn = el('button', 'menu-item menu-item-danger', 'Delete this note');
-  deleteBtn.type = 'button';
-  deleteBtn.addEventListener('click', () => {
-    morePopover.close();
-    openTextPrompt({
-      title: 'Delete this note?',
-      placeholder: 'Type DELETE to confirm',
-      onSubmit: (text) => {
-        if (text.toUpperCase() !== 'DELETE') {
-          toast('Not deleted — type DELETE to confirm.');
-          return;
-        }
-        const id = workspace.current.id;
-        workspace.deleteNote(id).then(() => {
-          toast('Note deleted.');
-          showScreen('library');
-        });
-      },
-    });
-  });
-  morePopover.el.appendChild(deleteBtn);
-
-  morePopover.el.appendChild(el('div', 'menu-head', 'Input'));
-
-  const rulerItem = el('button', 'menu-item');
-  rulerItem.type = 'button';
-  rulerItem.appendChild(el('span', 'menu-label', 'Ruler'));
-  const rulerState = el('span', 'menu-value');
-  rulerItem.appendChild(rulerState);
-  rulerItem.addEventListener('click', () => {
-    rulerVisible = !rulerVisible;
-    ruler.setVisible(rulerVisible);
-    if (rulerVisible) ruler.update();
-    buildMoreMenu();
-  });
-  morePopover.el.appendChild(rulerItem);
-  rulerState.textContent = rulerVisible ? 'On' : 'Off';
-
-  const fingerItem = el('button', 'menu-item');
-  fingerItem.type = 'button';
-  fingerItem.appendChild(el('span', 'menu-label', 'Finger'));
-  const fingerState = el('span', 'menu-value');
-  fingerItem.appendChild(fingerState);
-  fingerItem.addEventListener('click', () => {
-    toggleFingerDrawing();
-    syncUI();
-    buildMoreMenu();
-  });
-  morePopover.el.appendChild(fingerItem);
-  fingerState.textContent = { draw: 'Draws', pan: 'Pans', none: 'Ignored' }[fingerAction()];
-
-  const autoItem = el('button', 'menu-item');
-  autoItem.type = 'button';
-  autoItem.appendChild(el('span', 'menu-label', 'Input mode: Automatic'));
-  autoItem.addEventListener('click', () => {
-    resetFingerDrawing();
-    syncUI();
-    buildMoreMenu();
-  });
-  morePopover.el.appendChild(autoItem);
-
-  fingerState.textContent = fingerDrawingEnabled() ? 'On' : 'Off';
+  }));
 }
 
 // --- file import -----------------------------------------------------------
@@ -836,6 +795,7 @@ const toolbar = buildToolbar(toolbarEl, {
     askAiPopover.open(anchor);
     askAi.focus();
   },
+  onOpenPages: () => togglePagesPanel(),
   onOpenMore: (anchor) => {
     if (morePopover.isOpen()) {
       morePopover.close();
@@ -972,6 +932,63 @@ if (scrollThumbEl && scrollbarEl) {
   };
   scrollThumbEl.addEventListener('pointerup', endDrag);
   scrollThumbEl.addEventListener('pointercancel', endDrag);
+}
+
+// --- pages panel (B3) --------------------------------------------------------
+// The page sidebar is a READ-ONLY view of the workspace. Every page mutation
+// goes through workspace.js, which notifies syncUI(); syncUI() then pushes the
+// new page list back into the panel. Thumbnails are cached by content and
+// rendered one per frame inside the panel, never in a burst.
+const pagesPanel = buildPagesPanel({
+  onScrollToPage: (index) => scrollToPage(index),
+  onAddPage: () => {
+    workspace.addPage();
+    scrollToPage(workspace.pageIndex);
+    surface.redraw();
+    syncUI();
+  },
+  onDuplicatePage: (index) => {
+    const copy = workspace.duplicatePage(index, { onLayerLoad: () => surface.redraw() });
+    if (!copy) return;
+    scrollToPage(workspace.pageIndex);
+    surface.redraw();
+    syncUI();
+  },
+  onDeletePage: (index) => {
+    workspace.removePage(index);
+    scrollToPage(workspace.pageIndex);
+    surface.redraw();
+    syncUI();
+  },
+  onClearPage: (index) => {
+    const page = workspace.pages[index];
+    if (!page) return;
+    if (!pageHasContent(page)) {
+      toast('Nothing to clear.');
+      return;
+    }
+    page.strokes.length = 0;
+    for (const layer of [...page.layers]) removeLayer(page, layer.id);
+    if (index === workspace.pageIndex) history.clear();
+    workspace.markDirty();
+    surface.redraw();
+    syncUI();
+    toast('Page cleared.');
+  },
+});
+document.body.appendChild(pagesPanel.element);
+
+function togglePagesPanel() {
+  if (pagesPanel.isOpen()) {
+    pagesPanel.close();
+    return;
+  }
+  syncPagesPanel();
+  pagesPanel.open();
+}
+
+function syncPagesPanel() {
+  pagesPanel.update({ pages: workspace.pages, pageIndex: workspace.pageIndex });
 }
 
 // --- selection + transform (B2) --------------------------------------------
@@ -1673,6 +1690,7 @@ function syncUI() {
   });
   syncStrokePanel();
   updatePageChrome();
+  syncPagesPanel();
   if (palettePopover.isOpen()) {
     palette.update({ color: colorForTool(), palettes, paletteIndex });
   }

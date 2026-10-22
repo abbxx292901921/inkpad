@@ -29,7 +29,7 @@ const PRECACHE_PATHS = [
 'src/ai/presets.js', 'src/ai/providers.js', 'src/app.js', 'src/canvas.js', 'src/coord.js', 'src/export.js', 'src/input.js', 'src/layout.js',
 'src/pages.js', 'src/pdf.js', 'src/shapes.js', 'src/storage.js', 'src/strokes.js', 'src/sw-register.js', 'src/text.js', 'src/tools.js',
 'src/transform.js', 'src/ui/ask-ai.css', 'src/ui/ask-ai.js', 'src/ui/icons.js', 'src/ui/library.css', 'src/ui/library.js',
-'src/ui/palette.js', 'src/ui/popover.js', 'src/ui/prompt.js', 'src/ui/rotation-dial.js', 'src/ui/ruler.css', 'src/ui/ruler.js',
+'src/ui/pages-panel.css', 'src/ui/pages-panel.js', 'src/ui/palette.js', 'src/ui/popover.js', 'src/ui/prompt.js', 'src/ui/rotation-dial.js', 'src/ui/ruler.css', 'src/ui/ruler.js',
 'src/ui/select-menu.css', 'src/ui/select-menu.js', 'src/ui/selection.css', 'src/ui/selection.js', 'src/ui/settings.css', 'src/ui/settings.js', 'src/ui/shape-editor.css',
 'src/ui/shape-editor.js', 'src/ui/shape-menu.css', 'src/ui/shape-menu.js', 'src/ui/stroke-panel.js', 'src/ui/text-input.css',
 'src/ui/text-input.js', 'src/ui/toolbar.js', 'src/workspace.js', 'theme.css', 'vendor/pdfjs/LICENSE', 'vendor/pdfjs/cmaps/78-EUC-H.bcmap',

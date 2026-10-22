@@ -1,0 +1,258 @@
+/* pages-panel.css — the floating page sidebar.
+   Injected by ui/pages-panel.js at runtime (no build step). */
+
+.pages-panel {
+  position: fixed;
+  top: 72px;
+  right: max(10px, env(safe-area-inset-right));
+  bottom: calc(84px + env(safe-area-inset-bottom));
+  z-index: 15;
+  width: 240px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  background: rgba(255, 255, 255, 0.96);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-card);
+  box-shadow: var(--card-shadow);
+  overflow: hidden;
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+}
+
+.pages-panel[hidden] {
+  display: none;
+}
+
+.pp-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 2px 0 4px;
+}
+
+.pp-title {
+  flex: 1;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.pp-count {
+  min-width: 22px;
+  padding: 1px 7px;
+  border-radius: 11px;
+  background: #f2f2f7;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.pp-close {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.pp-close:hover {
+  background: #f2f2f7;
+  color: var(--ink);
+}
+
+.pp-search {
+  display: flex;
+}
+
+.pp-search-input {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  background: #f7f7fa;
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  outline: none;
+}
+
+.pp-search-input:focus {
+  border-color: var(--accent);
+  background: #fff;
+}
+
+.pp-list {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 2px;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.pp-card {
+  position: relative;
+  flex: 0 0 auto;
+  border: 1px solid var(--hairline);
+  border-radius: 12px;
+  background: #fff;
+  overflow: hidden;
+}
+
+.pp-card.is-current {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(10, 132, 255, 0.18);
+}
+
+.pp-card-main {
+  display: block;
+  width: 100%;
+  padding: 8px;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.pp-thumb {
+  width: 100%;
+  aspect-ratio: 794 / 1123;
+  border-radius: 8px;
+  background: #f2f2f7;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.pp-thumb.is-empty::after {
+  content: "";
+  width: 26%;
+  height: 26%;
+  border: 2px dashed #c7ccd4;
+  border-radius: 6px;
+}
+
+.pp-thumb-img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #fff;
+}
+
+.pp-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 2px 8px 8px;
+}
+
+.pp-num {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.pp-more {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.pp-more:hover {
+  background: #f2f2f7;
+  color: var(--ink);
+}
+
+.pp-menu {
+  position: absolute;
+  right: 8px;
+  bottom: 38px;
+  z-index: 2;
+  min-width: 132px;
+  display: flex;
+  flex-direction: column;
+  padding: 4px;
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: var(--card-shadow);
+}
+
+.pp-menu[hidden] {
+  display: none;
+}
+
+.pp-menu-item {
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.pp-menu-item:hover {
+  background: #f2f2f7;
+}
+
+.pp-menu-item-danger {
+  color: #d70015;
+}
+
+.pp-add {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 11px;
+  border: 1px dashed #cfd4dc;
+  border-radius: 12px;
+  background: #fff;
+  color: var(--muted);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.pp-add:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.pp-add-plus {
+  font-size: 18px;
+  line-height: 1;
+}
+
+@media (max-width: 700px) {
+  .pages-panel {
+    top: 64px;
+    right: 8px;
+    bottom: 76px;
+    width: 200px;
+  }
+}
