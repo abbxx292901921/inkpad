@@ -115,7 +115,9 @@ registerTool('select', {
   name: 'Select',
   kind: 'select',
   icon: 'select',
-  options: {},
+  // 'freeform' is the lasso you draw around ink; 'boxed' is a dragged
+  // rectangle. The canvas handles both; the UI only picks the mode.
+  options: { mode: 'freeform' },
 });
 
 registerTool('text', {

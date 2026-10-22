@@ -247,48 +247,69 @@ export function toRecord(note) {
   }
   const now = Date.now();
   const pages = Array.isArray(note.pages) ? note.pages : [];
-  return {
+  const record = {
     id: note.id,
     title: note.title ?? 'Untitled',
     folderId: note.folderId ?? null,
     createdAt: Number.isFinite(note.createdAt) ? note.createdAt : now,
     updatedAt: Number.isFinite(note.updatedAt) ? note.updatedAt : now,
     thumbnail: typeof note.thumbnail === 'string' ? note.thumbnail : null,
-    pages: pages.map((page) => ({
-      id: page.id,
-      name: page.name ?? 'Page',
-      layers: (page.layers ?? []).map(toLayerRecord),
-      strokes: (page.strokes ?? []).map(toStrokeRecord),
-    })),
+    pages: pages.map(toPageRecord),
   };
+  // The template new pages inherit. Optional, so old records stay valid.
+  if (typeof note.template === 'string') record.template = note.template;
+  return record;
+}
+
+// One page: geometry and paper template are written only when they exist, so
+// records from before the multi-page layout still round-trip unchanged.
+function toPageRecord(page) {
+  const record = {
+    id: page.id,
+    name: page.name ?? 'Page',
+    layers: (page.layers ?? []).map(toLayerRecord),
+    strokes: (page.strokes ?? []).map(toStrokeRecord),
+  };
+  if (Number.isFinite(page.w) && page.w > 0) record.w = page.w;
+  if (Number.isFinite(page.h) && page.h > 0) record.h = page.h;
+  if (typeof page.template === 'string') record.template = page.template;
+  return record;
 }
 
 // A record as the app sees it again. The layers come back WITHOUT their
 // object URL and image element — call hydrateLayer / hydrateNote for those.
 export function fromRecord(record) {
   const pages = Array.isArray(record.pages) ? record.pages : [];
-  return {
+  const note = {
     id: record.id,
     title: record.title ?? 'Untitled',
     folderId: record.folderId ?? null,
     createdAt: record.createdAt ?? 0,
     updatedAt: record.updatedAt ?? 0,
     thumbnail: typeof record.thumbnail === 'string' ? record.thumbnail : null,
-    pages: pages.map((page) => ({
-      id: page.id,
-      name: page.name ?? 'Page',
-      layers: (page.layers ?? []).map((layer) => ({
-        ...toLayerRecord(layer),
-        url: null,
-        img: null,
-        loaded: false,
-      })),
-      strokes: (page.strokes ?? []).map((stroke) => ({
-        ...stroke,
-        points: (stroke.points ?? []).map((p) => ({ ...p })),
-      })),
-    })),
+    pages: pages.map((page) => {
+      const out = {
+        id: page.id,
+        name: page.name ?? 'Page',
+        layers: (page.layers ?? []).map((layer) => ({
+          ...toLayerRecord(layer),
+          url: null,
+          img: null,
+          loaded: false,
+        })),
+        strokes: (page.strokes ?? []).map((stroke) => ({
+          ...stroke,
+          points: (stroke.points ?? []).map((p) => ({ ...p })),
+        })),
+      };
+      if (Number.isFinite(page.w) && page.w > 0) out.w = page.w;
+      if (Number.isFinite(page.h) && page.h > 0) out.h = page.h;
+      if (typeof page.template === 'string') out.template = page.template;
+      return out;
+    }),
   };
+  if (typeof record.template === 'string') note.template = record.template;
+  return note;
 }
 
 // The library row for a note record.

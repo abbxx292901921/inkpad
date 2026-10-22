@@ -7,7 +7,7 @@
 //   library  the Notability-style notes/folders screen
 //   editor   the canvas + floating toolbar
 
-import { createViewport, pageToScreen, resetViewport } from './coord.js';
+import { createViewport, pageToScreen, clampZoom } from './coord.js';
 import { createDrawingSurface } from './canvas.js';
 import {
   createHistory,
@@ -74,10 +74,22 @@ import {
   strokesInPolygon,
 } from './transform.js';
 import { snapshotStrokes, restoreStrokes, transformEntry } from './strokes.js';
+import {
+  pageRect,
+  docSize,
+  resolvePageAt,
+  PAGE_MARGIN,
+  DEFAULT_PAGE_W,
+  DEFAULT_PAGE_H,
+} from './layout.js';
 
 const canvas = document.getElementById('page');
+const paperCanvas = document.getElementById('paper');
 const debugEl = document.getElementById('debug');
 const toolbarEl = document.getElementById('toolbar');
+const bottomNavEl = document.getElementById('bottomnav');
+const scrollbarEl = document.getElementById('scrollbar');
+const scrollThumbEl = document.getElementById('scrollbar-thumb');
 const penRingEl = document.getElementById('penring');
 const fileInput = document.getElementById('file-input');
 const toastEl = document.getElementById('toast');
@@ -86,6 +98,16 @@ const editorEl = document.getElementById('editor');
 
 const viewport = createViewport();
 const history = createHistory();
+
+// History is global, pages are not. An entry is bound to the page's strokes
+// array when it is recorded, so Undo after scrolling to another sheet still
+// reverses the edit that was actually made instead of poking the wrong page.
+function onPage(page, entry) {
+  return {
+    undo: () => entry.undo(page.strokes),
+    redo: () => entry.redo(page.strokes),
+  };
+}
 
 let debugOn = false;
 let zoomPct = 100;
@@ -102,22 +124,106 @@ function colorForTool() {
 
 // --- toast -----------------------------------------------------------------
 let toastTimer = 0;
-function toast(message, ms = 3200) {
+let toastAction = null;
+
+function toast(message, ms = 3200, action = null) {
   if (!toastEl) return;
   toastEl.textContent = message;
+  toastAction = action;
+  if (action) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'toast-action';
+    btn.textContent = action.label;
+    btn.addEventListener('click', () => {
+      const fn = toastAction?.onClick;
+      hideToast();
+      if (fn) fn();
+    });
+    toastEl.appendChild(btn);
+  }
   toastEl.hidden = false;
   toastEl.classList.add('is-on');
   clearTimeout(toastTimer);
+  toastTimer = setTimeout(hideToast, ms);
+}
+
+function hideToast() {
+  if (!toastEl) return;
+  toastEl.classList.remove('is-on');
+  toastAction = null;
+  clearTimeout(toastTimer);
   toastTimer = setTimeout(() => {
-    toastEl.classList.remove('is-on');
-    setTimeout(() => {
-      toastEl.hidden = true;
-    }, 200);
-  }, ms);
+    toastEl.hidden = true;
+    toastEl.textContent = '';
+  }, 200);
 }
 
 // --- workspace -------------------------------------------------------------
 const workspace = createWorkspace({ onChange: () => syncUI() });
+
+// --- pages in document space -----------------------------------------------
+// Ink is stored in PAGE-local coordinates. The selection overlay, the shape
+// editor and the pen ring speak SCREEN pixels, so they are handed a viewport
+// SHIFTED by the active page's origin: pageToScreen(local) then lands exactly
+// where the ink was drawn, at any zoom and pan.
+function pageViewport(index = workspace.pageIndex) {
+  const r = workspace.pages.length ? pageRect(workspace.pages, index) : null;
+  if (!r) return viewport;
+  return {
+    ...viewport,
+    panX: viewport.panX + r.x * viewport.zoom,
+    panY: viewport.panY + r.y * viewport.zoom,
+  };
+}
+
+function pageSizeOf(page) {
+  return {
+    w: Number.isFinite(page?.w) && page.w > 0 ? page.w : DEFAULT_PAGE_W,
+    h: Number.isFinite(page?.h) && page.h > 0 ? page.h : DEFAULT_PAGE_H,
+  };
+}
+
+// The page a tool is acting on. Switching pages drops the selection: those
+// strokes live on the old sheet, and their overlay would land in the wrong
+// place.
+function activatePage(index) {
+  if (!workspace.pages[index] || workspace.pageIndex === index) return;
+  workspace.setPage(index);
+  if (selected.length > 0) {
+    selected = [];
+    syncSelection();
+  }
+}
+
+// While scrolling, the page indicator follows the page in the middle of the
+// screen. Debounced so a continuous scroll does not thrash the store.
+let pageSyncTimer = 0;
+
+function schedulePageSync() {
+  clearTimeout(pageSyncTimer);
+  pageSyncTimer = setTimeout(() => {
+    const index = centeredPageIndex();
+    if (index >= 0 && index !== workspace.pageIndex) activatePage(index);
+    updatePageChrome();
+  }, 160);
+}
+
+function centeredPageIndex() {
+  const pages = workspace.pages;
+  if (pages.length === 0) return -1;
+  const rect = canvas.getBoundingClientRect();
+  const cx = -viewport.panX / viewport.zoom + rect.width / (2 * viewport.zoom);
+  const cy = -viewport.panY / viewport.zoom + rect.height / (2 * viewport.zoom);
+  const hit = resolvePageAt(pages, cx, cy);
+  if (hit) return hit.index;
+  // In a gap: the page whose bottom is closest below the centre wins.
+  for (let i = 0; i < pages.length; i++) {
+    const r = pageRect(pages, i);
+    if (cy < r.y + r.h) return i;
+  }
+  return pages.length - 1;
+}
 
 // --- screens ---------------------------------------------------------------
 let screen = 'editor';
@@ -143,7 +249,7 @@ function onPenHover(info) {
     return;
   }
   const { x, y } = info;
-  const s = pageToScreen(x, y, viewport);
+  const s = pageToScreen(x, y, pageViewport(info.pageIndex ?? workspace.pageIndex));
   const tool = getCurrentTool();
   const width = tool.kind === 'eraser' ? tool.options.radius * 2 : tool.options.width;
   const size = Math.max(8, width * viewport.zoom);
@@ -158,63 +264,110 @@ function hidePenRing() {
 }
 
 // --- drawing surface -------------------------------------------------------
-const surface = createDrawingSurface(canvas, viewport, {
-  getStrokes: () => (workspace.page ? workspace.page.strokes : []),
-  getLayers: () => (workspace.page ? workspace.page.layers : []),
-  commitStroke: (stroke) => {
-    const page = workspace.page;
-    if (!page) return;
-    history.commit(addEntry(stroke, page.strokes.length));
-    page.strokes.push(stroke);
-    workspace.markDirty();
-    syncUI();
-  },
-  erasePath: (path) => {
-    const page = workspace.page;
-    if (!page || path.length === 0) return;
-    const ids = eraseHitIds(page.strokes, path, getToolOptions('eraser').radius);
-    if (ids.length === 0) return; // hit nothing: no history entry, no repaint
-    history.commit(deleteEntry(removeStrokesById(page.strokes, ids)));
-    workspace.markDirty();
-    surface.redraw();
-    syncUI();
-  },
-  onPenHover,
-  onViewportChange: () => {
-    zoomPct = Math.round(viewport.zoom * 100);
-    if (rulerVisible) ruler.update();
-  },
-  onLasso: (path) => {
-    const page = workspace.page;
-    if (!page) return;
-    if (path.length < 3) {
+// The ink canvas sits ON TOP of the paper canvas: sheets, ruling and imported
+// layers are painted underneath, so translucent ink can keep its
+// 'destination-over' behaviour and still show over the paper (see canvas.js).
+const AUTO_APPEND_MARGIN = 56;
+
+function strokeBottom(stroke) {
+  let maxY = -Infinity;
+  for (const p of stroke.points ?? []) if (p.y > maxY) maxY = p.y;
+  if (isTextObject(stroke)) maxY = Math.max(maxY, (stroke.y ?? 0) + (stroke.h ?? 0));
+  return maxY;
+}
+
+const surface = createDrawingSurface(
+  canvas,
+  viewport,
+  {
+    getPages: () => workspace.pages,
+    onActivePage: (index) => activatePage(index),
+    commitStroke: (stroke, pageIndex) => {
+      const page = workspace.pages[pageIndex] ?? workspace.page;
+      if (!page) return;
+      history.commit(onPage(page, addEntry(stroke, page.strokes.length)));
+      page.strokes.push(stroke);
+      // Writing at the bottom of the LAST page grows the notebook, so you
+      // never hit a wall. The new sheet appears BELOW; the active page does
+      // not change, so the stroke stays exactly where it was put.
+      if (pageIndex === workspace.pages.length - 1) {
+        const size = pageSizeOf(page);
+        if (strokeBottom(stroke) > size.h - AUTO_APPEND_MARGIN) {
+          workspace.addPage({ select: false });
+        }
+      }
+      workspace.markDirty();
+      syncUI();
+    },
+    erasePath: (path, pageIndex) => {
+      const page = workspace.pages[pageIndex] ?? workspace.page;
+      if (!page || path.length === 0) return;
+      const ids = eraseHitIds(page.strokes, path, getToolOptions('eraser').radius);
+      if (ids.length === 0) return; // hit nothing: no history entry, no repaint
+      history.commit(onPage(page, deleteEntry(removeStrokesById(page.strokes, ids))));
+      workspace.markDirty();
+      surface.redraw();
+      syncUI();
+    },
+    onPenHover,
+    onViewportChange: () => {
+      zoomPct = Math.round(viewport.zoom * 100);
+      if (rulerVisible) ruler.update();
+      // The selection box is drawn in screen pixels, so it has to follow a
+      // pan or a zoom just like the ink does.
+      if (selected.length > 0) syncSelection();
+      updatePageChrome();
+      schedulePageSync();
+    },
+    onLasso: (path, pageIndex) => {
+      const page = workspace.pages[pageIndex] ?? workspace.page;
+      if (!page) return;
+      activatePage(pageIndex);
       // A tap clears the selection.
-      selected = [];
+      if (path.length < 3) {
+        selected = [];
+        syncSelection();
+        return;
+      }
+      selected = strokesInPolygon(page.strokes, path);
       syncSelection();
-      return;
-    }
-    selected = strokesInPolygon(page.strokes, path);
-    syncSelection();
+    },
+    onSelectBox: (box, pageIndex) => {
+      const page = workspace.pages[pageIndex] ?? workspace.page;
+      if (!page) return;
+      activatePage(pageIndex);
+      // A marquee selects whatever it touches. Tested as a polygon so the
+      // hit rule matches the freeform lasso exactly.
+      const poly = [
+        { x: box.x, y: box.y },
+        { x: box.x + box.w, y: box.y },
+        { x: box.x + box.w, y: box.y + box.h },
+        { x: box.x, y: box.y + box.h },
+      ];
+      selected = strokesInPolygon(page.strokes, poly);
+      syncSelection();
+    },
+    onTextBox: ({ x, y, w, h }, pageIndex) => {
+      // A tap with no drag gets a default box, so the tool still works.
+      const box = { x, y, w: w || 260, h: h || 64, pageIndex };
+      pendingTextBox = box;
+      const s = pageToScreen(box.x, box.y, pageViewport(pageIndex));
+      const rect = canvas.getBoundingClientRect();
+      const tool = getCurrentTool();
+      const zoom = viewport.zoom;
+      textInput.openAt(rect.left + s.x, rect.top + s.y, {
+        color: tool.options.color,
+        size: Math.max(16, (tool.options.size ?? 28) * zoom),
+        width: box.w * zoom,
+        height: box.h * zoom,
+      });
+    },
+    debug: (text) => {
+      debugEl.textContent = text;
+    },
   },
-  onTextBox: ({ x, y, w, h }) => {
-    // A tap with no drag gets a default box, so the tool still works.
-    const box = { x, y, w: w || 260, h: h || 64 };
-    pendingTextBox = box;
-    const s = pageToScreen(box.x, box.y, viewport);
-    const rect = canvas.getBoundingClientRect();
-    const tool = getCurrentTool();
-    const zoom = viewport.zoom;
-    textInput.openAt(rect.left + s.x, rect.top + s.y, {
-      color: tool.options.color,
-      size: Math.max(16, (tool.options.size ?? 28) * zoom),
-      width: box.w * zoom,
-      height: box.h * zoom,
-    });
-  },
-  debug: (text) => {
-    debugEl.textContent = text;
-  },
-});
+  { paper: paperCanvas },
+);
 
 // --- popovers --------------------------------------------------------------
 // Only one panel is open at a time, like the reference: opening the colour
@@ -271,7 +424,7 @@ const strokePanel = buildStrokePanel({
 });
 strokePopover.el.appendChild(strokePanel.el);
 
-// --- the "more" menu -------------------------------------------------------
+// --- the "more" menu (B3) ---------------------------------------------------
 function buildMoreMenu() {
   morePopover.el.textContent = '';
   morePopover.el.appendChild(el('div', 'menu-head', 'This page'));
@@ -301,19 +454,18 @@ function buildMoreMenu() {
   addPageBtn.appendChild(el('span', 'menu-label', 'Add a blank page'));
   addPageBtn.addEventListener('click', () => {
     workspace.addPage();
-    surface.redraw();
+    scrollToPage(workspace.pageIndex);
     morePopover.close();
   });
   morePopover.el.appendChild(addPageBtn);
 
   const resetView = el('button', 'menu-item');
   resetView.type = 'button';
-  resetView.appendChild(el('span', 'menu-label', 'Reset the view'));
+  resetView.appendChild(el('span', 'menu-label', 'Fit page to width'));
   resetView.appendChild(el('span', 'menu-value', `${zoomPct}%`));
   resetView.addEventListener('click', () => {
-    resetViewport(viewport);
-    zoomPct = 100;
-    surface.redraw();
+    fitPage();
+    zoomPct = Math.round(viewport.zoom * 100);
     buildMoreMenu();
   });
   morePopover.el.appendChild(resetView);
@@ -468,14 +620,30 @@ function buildMoreMenu() {
 // right now. That is what makes it pan and zoom with the ink: zoom in to
 // write on an imported photo and the photo comes with you.
 
-// The page-space rectangle of the visible area.
+// The page-space rectangle of the visible area, ON THE ACTIVE PAGE and in
+// PAGE-LOCAL coordinates. A new image is contain-fitted into this, so an
+// import lands in front of the user instead of on some other sheet.
 function visiblePageRect() {
   const rect = canvas.getBoundingClientRect();
-  return {
+  const doc = {
     x: -viewport.panX / viewport.zoom,
     y: -viewport.panY / viewport.zoom,
     w: rect.width / viewport.zoom,
     h: rect.height / viewport.zoom,
+  };
+  const pr = workspace.pages.length
+    ? pageRect(workspace.pages, workspace.pageIndex)
+    : null;
+  if (!pr) return doc;
+  const x1 = Math.max(pr.x, doc.x);
+  const y1 = Math.max(pr.y, doc.y);
+  const x2 = Math.min(pr.x + pr.w, doc.x + doc.w);
+  const y2 = Math.min(pr.y + pr.h, doc.y + doc.h);
+  return {
+    x: x1 - pr.x,
+    y: y1 - pr.y,
+    w: Math.max(1, x2 - x1),
+    h: Math.max(1, y2 - y1),
   };
 }
 
@@ -492,7 +660,10 @@ function placeLayer(layer, view) {
 }
 
 async function importFile(file) {
-  if (!workspace.current) workspace.newNote();
+  if (!workspace.current) {
+    workspace.newNote();
+    fitPage();
+  }
   if (file.type === 'application/pdf' || /\.pdf$/i.test(file.name)) {
     await importPdfFile(file);
     return;
@@ -527,19 +698,23 @@ async function importPdfFile(file) {
       return;
     }
 
-    const view = visiblePageRect();
     const newPages = rendered.map((p) => {
-      const pg = createPage({ name: `Page ${p.pageNumber}` });
+      // A PDF page keeps its own aspect ratio at the notebook's page width,
+      // so a landscape slide is a landscape sheet, not a letterbox.
+      const aspect = p.width > 0 ? p.height / p.width : DEFAULT_PAGE_H / DEFAULT_PAGE_W;
+      const w = DEFAULT_PAGE_W;
+      const h = Math.round(w * aspect);
+      const pg = createPage({ name: `Page ${p.pageNumber}`, w, h, template: 'blank' });
       const layer = createImageLayer({
         blob: p.blob,
         url: p.url,
         name: file.name,
         kind: 'pdf',
+        // The raster IS the page, so it occupies the whole sheet exactly.
+        rect: { x: 0, y: 0, w, h },
       });
-      layer.onLoad = (l) => {
-        placeLayer(l, view);
-        surface.redraw();
-      };
+      layer.onLoad = () => surface.redraw();
+      layer.pageNumber = p.pageNumber;
       pg.layers.push(layer);
       return pg;
     });
@@ -549,16 +724,19 @@ async function importPdfFile(file) {
     const pages = workspace.pages;
     const only = pages[0];
     const noteIsEmpty = pages.length === 1 && !pageHasContent(only);
+    let target = 0;
     if (noteIsEmpty) {
       for (const layer of only.layers) removeLayer(only, layer.id);
       workspace.current.pages = newPages;
       workspace.setPage(0);
     } else {
+      target = workspace.current.pages.length;
       workspace.current.pages.push(...newPages);
-      workspace.setPage(workspace.current.pages.length - newPages.length);
+      workspace.setPage(target);
     }
     workspace.markDirty();
-    surface.redraw();
+    fitPage();
+    scrollToPage(target);
     syncUI();
     if (workspace.current.title === 'Untitled') {
       workspace.renameNote(file.name.replace(/\.[^.]+$/, ''));
@@ -663,14 +841,10 @@ const toolbar = buildToolbar(toolbarEl, {
     morePopover.open(anchor);
   },
   onPrevPage: () => {
-    workspace.setPage(workspace.pageIndex - 1);
-    surface.redraw();
-    syncUI();
+    scrollToPage(workspace.pageIndex - 1);
   },
   onNextPage: () => {
-    workspace.setPage(workspace.pageIndex + 1);
-    surface.redraw();
-    syncUI();
+    scrollToPage(workspace.pageIndex + 1);
   },
   onBack: () => {
     workspace.save();
@@ -678,7 +852,124 @@ const toolbar = buildToolbar(toolbarEl, {
   },
 });
 
-// --- selection + transform -------------------------------------------------
+// The page navigator lives at the BOTTOM of the screen: the document is
+// scrollable now, so "which page am I on" belongs next to the thumb, not in
+// the top bar where the tools are.
+if (bottomNavEl && toolbar.pagesElement) bottomNavEl.appendChild(toolbar.pagesElement);
+
+// --- scrolling + page chrome (B3) ------------------------------------------
+// The page navigator, the scrollbar and "fit the page" all move the
+// viewport through surface.panTo(), so clamping and repainting happen in one
+// place (canvas.js).
+
+// Fit the ACTIVE page to the width of the screen. Capped at 100% so a wide
+// desktop window does not blow one page up to fill the screen.
+function fitPage() {
+  const rect = canvas.getBoundingClientRect();
+  const pages = workspace.pages;
+  if (!pages.length || !(rect.width > 0)) return;
+  const r = pageRect(pages, workspace.pageIndex) ?? pageRect(pages, 0);
+  if (!r) return;
+  const fit = (rect.width - PAGE_MARGIN * 2) / r.w;
+  viewport.zoom = clampZoom(Math.min(1, fit));
+  surface.panTo({ x: 0, y: r.y - PAGE_MARGIN / viewport.zoom });
+}
+
+// Bring a page to the top of the screen without changing the zoom.
+function scrollToPage(index) {
+  const pages = workspace.pages;
+  if (!pages.length) return;
+  const i = Math.max(0, Math.min(pages.length - 1, index));
+  workspace.setPage(i);
+  const r = pageRect(pages, i);
+  surface.panTo({ x: 0, y: r.y - PAGE_MARGIN / viewport.zoom });
+  syncUI();
+}
+
+function updateScrollbar() {
+  if (!scrollbarEl || !scrollThumbEl) return;
+  const pages = workspace.pages;
+  // Measure only once the bar is laid out: a `hidden` element has no height,
+  // so asking before showing it would keep it hidden forever.
+  scrollbarEl.hidden = false;
+  const trackH = scrollbarEl.clientHeight;
+  const rect = canvas.getBoundingClientRect();
+  if (!pages.length || trackH <= 0 || !(rect.height > 0)) {
+    scrollbarEl.hidden = true;
+    return;
+  }
+  const doc = docSize(pages);
+  const viewH = rect.height / viewport.zoom;
+  if (doc.h <= viewH + PAGE_MARGIN * 2) {
+    // The whole document fits: a scrollbar would be noise.
+    scrollbarEl.hidden = true;
+    return;
+  }
+  scrollbarEl.hidden = false;
+  const thumbH = Math.max(36, Math.round(trackH * Math.min(1, viewH / doc.h)));
+  const top = -viewport.panY / viewport.zoom;
+  const frac = Math.max(0, Math.min(1, top / (doc.h - viewH)));
+  const y = Math.round(frac * (trackH - thumbH));
+  scrollThumbEl.style.height = `${thumbH}px`;
+  scrollThumbEl.style.transform = `translateY(${y}px)`;
+}
+
+function updatePageChrome() {
+  updateScrollbar();
+  if (toolbar && toolbar.setPage) toolbar.setPage(workspace.pageIndex, workspace.pages.length);
+  if (scrollbarEl) scrollbarEl.dataset.page = String(workspace.pageIndex + 1);
+}
+
+// Drag the thumb to scroll. The thumb maps the whole document, so grabbing it
+// near the middle goes to the middle, like a normal scrollbar.
+let scrollDrag = null;
+
+if (scrollThumbEl && scrollbarEl) {
+  scrollThumbEl.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0 && e.pointerType === 'mouse') return;
+    e.preventDefault();
+    e.stopPropagation();
+    const pages = workspace.pages;
+    if (!pages.length) return;
+    const doc = docSize(pages);
+    const rect = canvas.getBoundingClientRect();
+    const viewH = rect.height / viewport.zoom;
+    const trackH = scrollbarEl.clientHeight;
+    const thumbH = scrollThumbEl.offsetHeight;
+    scrollDrag = {
+      id: e.pointerId,
+      startY: e.clientY,
+      startTop: -viewport.panY / viewport.zoom,
+      span: Math.max(0, doc.h - viewH),
+      travel: Math.max(1, trackH - thumbH),
+    };
+    try {
+      scrollThumbEl.setPointerCapture(e.pointerId);
+    } catch {
+      // ignore: capture is an optimisation here
+    }
+  });
+  scrollThumbEl.addEventListener('pointermove', (e) => {
+    if (!scrollDrag || e.pointerId !== scrollDrag.id) return;
+    const dy = e.clientY - scrollDrag.startY;
+    surface.panTo({ y: scrollDrag.startTop + (dy / scrollDrag.travel) * scrollDrag.span });
+  });
+  const endDrag = (e) => {
+    if (!scrollDrag || e.pointerId !== scrollDrag.id) return;
+    scrollDrag = null;
+    try {
+      if (scrollThumbEl.hasPointerCapture(e.pointerId)) {
+        scrollThumbEl.releasePointerCapture(e.pointerId);
+      }
+    } catch {
+      // ignore
+    }
+  };
+  scrollThumbEl.addEventListener('pointerup', endDrag);
+  scrollThumbEl.addEventListener('pointercancel', endDrag);
+}
+
+// --- selection + transform (B2) --------------------------------------------
 // `selected` is the subset of the current page's strokes that the selection
 // box is acting on.
 let selected = [];
@@ -717,7 +1008,7 @@ function syncTextAnchors() {
 }
 
 const selection = buildSelection({
-  getViewport: () => viewport,
+  getViewport: () => pageViewport(),
   getCanvasRect: () => canvas.getBoundingClientRect(),
   showEdgeHandles: false,
   onMove: ({ dx, dy }) => {
@@ -900,7 +1191,7 @@ function openFolderPicker() {
   listPromptPopover.open(toolbarEl.querySelector('.pill-right') || toolbarEl);
 }
 
-// --- AI ---------------------------------------------------------------------
+// --- AI (B4) -----------------------------------------------------------------
 // The user picks the provider; the app never rotates between providers on
 // its own. Keys live in localStorage only and are never logged.
 
@@ -1028,7 +1319,7 @@ async function sendToAi(question) {
 // When exactly one shape is selected, its vertices become draggable. A vertex
 // snaps to a nearby vertex or edge of another shape.
 const shapeEditor = buildShapeEditor({
-  getViewport: () => viewport,
+  getViewport: () => pageViewport(),
   getCanvasRect: () => canvas.getBoundingClientRect(),
   onChange: ({ stroke, index, x, y }) => {
     beginTransform();
@@ -1051,7 +1342,7 @@ const shapeEditor = buildShapeEditor({
     if (!page) return;
     const removed = removeStrokesById(page.strokes, [stroke.id]);
     if (removed.length === 0) return;
-    history.commit(deleteEntry(removed));
+    history.commit(onPage(page, deleteEntry(removed)));
     selected = [];
     workspace.markDirty();
     surface.redraw();
@@ -1075,7 +1366,7 @@ function syncShapeEditor() {
   shapeEditor.update({ stroke: shape, others, visible: true });
 }
 
-// --- text tool -------------------------------------------------------------
+// --- text tool (B1) ----------------------------------------------------------
 // Tap with the text tool and a caret appears where you tapped. The typed
 // text becomes a real object on the page, so it can be selected, moved,
 // saved and exported like any other ink.
@@ -1087,9 +1378,11 @@ const measureCtx = measureCanvas.getContext('2d');
 
 const textInput = buildTextInput({
   onCommit: (text) => {
-    const page = workspace.page;
     const box = pendingTextBox;
     pendingTextBox = null;
+    // The box remembers which page it was dragged on, so the text lands on
+    // that sheet even if the user scrolled while typing.
+    const page = box ? workspace.pages[box.pageIndex ?? workspace.pageIndex] : workspace.page;
     if (!page || !box || !text) {
       setCurrentTool('pen');
       syncUI();
@@ -1107,7 +1400,7 @@ const textInput = buildTextInput({
     });
     // Shrink the font until the text fits the box the user drew.
     if (obj.w > 0 && obj.h > 0) obj.size = fitTextSize(measureCtx, obj);
-    history.commit(addEntry(obj, page.strokes.length));
+    history.commit(onPage(page, addEntry(obj, page.strokes.length)));
     page.strokes.push(obj);
     workspace.markDirty();
     surface.redraw();
@@ -1127,13 +1420,13 @@ const library = buildLibrary(libraryEl, {
   onNewNote: () => {
     workspace.newNote();
     showScreen('editor');
-    surface.redraw();
+    fitPage();
     syncUI();
   },
   onOpenNote: async (id) => {
     await workspace.openNote(id);
     showScreen('editor');
-    surface.redraw();
+    fitPage();
     syncUI();
   },
   onImportFile: () => {
@@ -1222,6 +1515,7 @@ function syncUI() {
     showWidths: tool.kind !== 'select',
   });
   syncStrokePanel();
+  updatePageChrome();
   if (palettePopover.isOpen()) {
     palette.update({ color: colorForTool(), palettes, paletteIndex });
   }
@@ -1302,6 +1596,7 @@ async function boot() {
     workspace.newNote();
   }
   surface.resize();
+  fitPage();
   syncUI();
   setDebug(false);
   if (!persistent) {
@@ -1315,7 +1610,17 @@ refreshSettings();
 syncAi();
 
 registerServiceWorker({
-  onUpdate: () => toast('A new version is ready — reopen Inkpad to update.', 6000),
+  onUpdate: (registration) => {
+    // A new build is waiting. Say so, and offer the reload — otherwise the
+    // old build keeps running and the app behaves like it ignored you.
+    toast('A new version is ready.', 20000, {
+      label: 'Reload',
+      onClick: () => {
+        if (registration && registration.waiting) registration.waiting.postMessage({ type: 'SKIP_WAITING' });
+        window.location.reload();
+      },
+    });
+  },
 });
 
 // Console handle for diagnosis: inspect live state with
@@ -1333,6 +1638,9 @@ window.__inkpad = {
   get pageIndex() {
     return workspace.pageIndex;
   },
+  get pages() {
+    return workspace.pages;
+  },
   get strokes() {
     return workspace.page ? workspace.page.strokes : [];
   },
@@ -1346,9 +1654,7 @@ window.__inkpad = {
   palettes,
   showScreen,
   importFile,
-  setPage: (i) => {
-    workspace.setPage(i);
-    surface.redraw();
-    syncUI();
-  },
+  fitPage,
+  scrollToPage,
+  setPage: (i) => scrollToPage(i),
 };

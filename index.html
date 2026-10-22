@@ -15,11 +15,20 @@
   <link rel="stylesheet" href="theme.css">
 </head>
 <body>
-  <!-- The editor: canvas + floating toolbar. -->
+  <!-- The editor: canvases + floating toolbar. -->
   <div id="editor" class="screen">
+    <!-- The PAPER canvas: page sheets, ruling and imported layers. It sits
+         under the ink so translucent ink can composite against the ink only. -->
+    <canvas id="paper" aria-hidden="true"></canvas>
     <canvas id="page" aria-label="Note-taking canvas. Draw with pen, touch, or mouse."></canvas>
+    <!-- Document scrollbar. Built by src/app.js. -->
+    <div id="scrollbar" class="scrollbar" hidden>
+      <div id="scrollbar-thumb" class="scrollbar-thumb"></div>
+    </div>
     <!-- Toolbar: built by src/ui/toolbar.js (floating pills). -->
     <div id="toolbar" class="toolbar"></div>
+    <!-- Bottom-centre page navigator, docked by src/app.js. -->
+    <div id="bottomnav" class="bottomnav"></div>
   </div>
 
   <!-- The library: built by src/ui/library.js. -->

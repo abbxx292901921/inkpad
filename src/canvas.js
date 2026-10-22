@@ -17,6 +17,24 @@
 // collects a page-space path and hands it to hooks.erasePath — no ink is
 // painted for the eraser gesture.
 //
+// PAGES: the document is a vertical stack of pages on one table (see
+// src/layout.js). Document coordinates pan and zoom; INK LIVES IN PAGE-local
+// coordinates. A gesture is PINNED to the page it started on: every point is
+// converted by subtracting that page's origin, and drawing is clipped to the
+// sheet. So a stroke can never wrap onto the page below, and inserting a page
+// never rewrites existing ink.
+//
+// TWO CANVASES: the sheets, their ruling and the imported layers are painted
+// on the PAPER canvas underneath; the ink goes on the transparent canvas on
+// top. That separation is what lets translucent ink keep using
+// 'destination-over' (the marker must sit behind ink but ON TOP of the paper).
+// A single canvas could not do both: the white sheet would hide the marker.
+//
+// BACKWARD COMPATIBILITY: when `hooks.getPages` is absent the surface behaves
+// exactly as the old single-page canvas (one implicit page at the origin,
+// getStrokes/getLayers, no paper canvas). The integration suite drives that
+// path.
+//
 // APPLE PENCIL:
 // - Squeeze / flipped eraser end reports `buttons & 32` (button 5). That
 //   gesture erases no matter which tool is selected.
@@ -50,6 +68,14 @@ import { defaultInput } from './input.js';
 import { containFit } from './pages.js';
 import { isShapeStroke, renderShape, createShapeStroke } from './shapes.js';
 import { isTextObject, renderText } from './text.js';
+import {
+  pageRect,
+  docSize,
+  resolvePageAt,
+  visiblePages,
+  clampPan,
+  drawPageSheet,
+} from './layout.js';
 
 // Shapes are strokes, but they are drawn as a hard-edged path: the ink
 // renderer's midpoint smoothing would round a rectangle's corners.
@@ -90,15 +116,21 @@ function isPenEraseGesture(e) {
   return (e.buttons & PEN_ERASER_BIT) !== 0 || (e.buttons & PEN_BARREL_BIT) !== 0 || e.button === 5;
 }
 
-export function createDrawingSurface(canvas, viewport, hooks) {
+export function createDrawingSurface(canvas, viewport, hooks, options = {}) {
   // `desynchronized` asks the compositor for a low-latency surface. Not all
-  // browsers honour it; it is a hint only.
+  // browsers honour it; it is a hint only. The ink canvas MUST be transparent
+  // so the paper canvas shows through.
   const ctx = canvas.getContext('2d', { desynchronized: true, alpha: true });
+  // The paper canvas is optional (the integration suite has none).
+  const paperCanvas = options.paper ?? null;
+  const paperCtx = paperCanvas
+    ? paperCanvas.getContext('2d', { desynchronized: true, alpha: true })
+    : null;
   // Pointer arbitration policy (pen vs finger). Injectable so tests can use
   // an isolated instance instead of the app-wide default.
   const policy = hooks.input ?? defaultInput;
   // pointerId -> { stroke, erasing, path[], renderedPieces, coalescedTotal,
-  //                pointerType }
+  //                pointerType, pageIndex, rect, selectBox, box }
   const active = new Map();
   // Touch tracking for pan/zoom gestures: pointerId -> { x, y, downAt, moved }
   // (x/y in CSS pixels relative to the canvas).
@@ -111,21 +143,45 @@ export function createDrawingSurface(canvas, viewport, hooks) {
   let debugOn = false;
   let lastPenAt = 0; // timestamp of the most recent pen event (hover or contact)
 
+  // The document's pages, or null in single-page mode.
+  function pagesNow() {
+    return typeof hooks.getPages === 'function' ? hooks.getPages() : null;
+  }
+
+  function clearCanvas(target, element) {
+    if (!target || !element) return;
+    target.save();
+    target.setTransform(1, 0, 0, 1, 0, 0);
+    target.clearRect(0, 0, element.width, element.height);
+    target.restore();
+  }
+
   function clearDevicePixels() {
+    clearCanvas(ctx, canvas);
+    clearCanvas(paperCtx, paperCanvas);
+  }
+
+  // Run `fn` with the context in the given PAGE's coordinate space, clipped
+  // to the sheet. A null rect means legacy single-page mode (no translate,
+  // no clip) — exactly the old behaviour.
+  function withPage(rect, fn) {
     ctx.save();
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    applyTransform(ctx, viewport);
+    if (rect) {
+      ctx.translate(rect.x, rect.y);
+      ctx.beginPath();
+      ctx.rect(0, 0, rect.w, rect.h);
+      ctx.clip();
+    }
+    fn(ctx);
     ctx.restore();
   }
 
   // Draw the page's background layers (imported PDF pages, photos of
   // homework). They sit UNDER the ink, which is what makes "import the
-  // assignment and write on it" work.
-  //
-  // A layer with a page-space rect pans and zooms WITH the ink, so zooming
-  // in to write on an imported photo keeps the photo and the ink together.
-  // A layer without one falls back to being fitted to the visible canvas.
-  function drawLayers() {
+  // assignment and write on it" work. In multi-page mode they belong to a
+  // page and their rect is PAGE-local, so they pan and zoom with the ink.
+  function drawLayersLegacy() {
     const layers = hooks.getLayers ? hooks.getLayers() : [];
     if (layers.length === 0) return;
     const rect = canvas.getBoundingClientRect();
@@ -154,13 +210,56 @@ export function createDrawingSurface(canvas, viewport, hooks) {
     }
   }
 
-  // Full repaint: background layers, committed strokes, then any stroke that
-  // is still in progress. The in-progress part matters — its ink is already on
-  // the canvas but it is not committed yet, so a bare committed-only redraw
-  // would wipe the line the user is drawing right now.
-  function repaintAll() {
+  // The sheets and layers, on the paper canvas (or the ink canvas when the
+  // caller did not supply a paper canvas).
+  function drawPaper(visible) {
+    const target = paperCtx || ctx;
+    for (const { page, rect } of visible) {
+      target.save();
+      applyTransform(target, viewport);
+      // A soft shadow under the sheet. Canvas shadows are in DEVICE pixels,
+      // so they do not scale with the transform.
+      target.shadowColor = 'rgba(15, 23, 42, 0.16)';
+      target.shadowBlur = 10 * viewport.dpr;
+      target.shadowOffsetY = 2 * viewport.dpr;
+      drawPageSheet(target, rect, page.template ?? 'blank', {
+        lineWidth: 1 / viewport.zoom,
+      });
+      target.restore();
+
+      const layers = page.layers ?? [];
+      if (layers.length === 0) continue;
+      target.save();
+      applyTransform(target, viewport);
+      target.translate(rect.x, rect.y);
+      target.beginPath();
+      target.rect(0, 0, rect.w, rect.h);
+      target.clip();
+      for (const layer of layers) {
+        if (!layer.loaded || !layer.img) continue;
+        const r = layer.rect;
+        if (r && Number.isFinite(r.x) && r.w > 0 && r.h > 0) {
+          target.drawImage(layer.img, r.x, r.y, r.w, r.h);
+        } else {
+          // No rect: contain-fit it to the page it belongs to.
+          const fit = containFit(
+            layer.naturalWidth,
+            layer.naturalHeight,
+            0,
+            0,
+            rect.w,
+            rect.h,
+          );
+          target.drawImage(layer.img, fit.x, fit.y, fit.w, fit.h);
+        }
+      }
+      target.restore();
+    }
+  }
+
+  function repaintLegacy() {
     clearDevicePixels();
-    drawLayers();
+    drawLayersLegacy();
     applyTransform(ctx, viewport);
     for (const s of hooks.getStrokes()) drawStroke(ctx, s);
     for (const entry of active.values()) {
@@ -171,6 +270,33 @@ export function createDrawingSurface(canvas, viewport, hooks) {
     }
   }
 
+  // Full repaint: visible sheets + layers on the paper canvas, committed ink
+  // on the ink canvas, then any stroke that is still in progress. The
+  // in-progress part matters — its ink is already on the canvas but it is not
+  // committed yet, so a bare committed-only redraw would wipe the line the
+  // user is drawing right now.
+  function repaintAll() {
+    const pages = pagesNow();
+    if (!pages) {
+      repaintLegacy();
+      return;
+    }
+    clearDevicePixels();
+    const rect = canvas.getBoundingClientRect();
+    const visible = visiblePages(pages, viewport, rect.width, rect.height);
+    drawPaper(visible);
+    for (const { page, rect: pr } of visible) {
+      withPage(pr, () => {
+        for (const s of page.strokes ?? []) drawStroke(ctx, s);
+      });
+    }
+    for (const entry of active.values()) {
+      if (!entry.stroke || entry.erasing) continue;
+      entry.renderedPieces = 0;
+      withPage(entry.rect, () => paintNewPieces(ctx, entry.stroke, entry));
+    }
+  }
+
   function redraw() {
     repaintAll();
   }
@@ -178,21 +304,55 @@ export function createDrawingSurface(canvas, viewport, hooks) {
   function resize() {
     viewport.dpr = window.devicePixelRatio || 1;
     const rect = canvas.getBoundingClientRect();
-    canvas.width = Math.max(1, Math.round(rect.width * viewport.dpr));
-    canvas.height = Math.max(1, Math.round(rect.height * viewport.dpr));
+    const w = Math.max(1, Math.round(rect.width * viewport.dpr));
+    const h = Math.max(1, Math.round(rect.height * viewport.dpr));
+    canvas.width = w;
+    canvas.height = h;
+    if (paperCanvas) {
+      paperCanvas.width = w;
+      paperCanvas.height = h;
+    }
     redraw();
   }
 
-  function toPagePoint(rawEvent) {
-    const p = screenPoint(rawEvent);
-    const page = screenToPage(p.x, p.y, viewport);
-    return { x: page.x, y: page.y, pressure: pressureOf(rawEvent) };
+  // The viewport moved: keep the document on the table, repaint, and let the
+  // app move the scrollbar and the page indicator.
+  function afterViewChange() {
+    clampView();
+    repaintAll();
+    if (hooks.onViewportChange) hooks.onViewportChange();
+  }
+
+  function clampView() {
+    const pages = pagesNow();
+    if (!pages || pages.length === 0) return false;
+    const rect = canvas.getBoundingClientRect();
+    if (!(rect.width > 0) || !(rect.height > 0)) return false;
+    const doc = docSize(pages);
+    return clampPan(viewport, rect.width, rect.height, doc.w, doc.h);
   }
 
   // CSS pixels relative to the canvas top-left.
   function screenPoint(rawEvent) {
     const rect = canvas.getBoundingClientRect();
     return { x: rawEvent.clientX - rect.left, y: rawEvent.clientY - rect.top };
+  }
+
+  // A DOCUMENT point (screen -> document space).
+  function docPoint(rawEvent) {
+    const p = screenPoint(rawEvent);
+    return screenToPage(p.x, p.y, viewport);
+  }
+
+  // A PAGE-local point: the document point minus the page origin. All stroke
+  // data is stored local, so this is the only place the offset is applied.
+  function toPagePoint(rawEvent, rect) {
+    const doc = docPoint(rawEvent);
+    return {
+      x: doc.x - (rect ? rect.x : 0),
+      y: doc.y - (rect ? rect.y : 0),
+      pressure: pressureOf(rawEvent),
+    };
   }
 
   // Build the shape a gesture describes. 'boxed' mode fits the chosen shape
@@ -248,13 +408,15 @@ export function createDrawingSurface(canvas, viewport, hooks) {
     const rect = canvas.getBoundingClientRect();
     const sx = e.clientX - rect.left;
     const sy = e.clientY - rect.top;
-    const p = screenToPage(sx, sy, viewport);
+    const doc = screenToPage(sx, sy, viewport);
+    const pages = pagesNow();
+    const hit = pages ? resolvePageAt(pages, doc.x, doc.y) : null;
     hooks.debug(
       [
         `phase=${phase} type=${e.pointerType} id=${e.pointerId} button=${e.button} buttons=${e.buttons}`,
-        `screen=(${sx.toFixed(1)}, ${sy.toFixed(1)})  page=(${p.x.toFixed(1)}, ${p.y.toFixed(1)})`,
+        `screen=(${sx.toFixed(1)}, ${sy.toFixed(1)})  doc=(${doc.x.toFixed(1)}, ${doc.y.toFixed(1)})  page=${hit ? hit.index : '-'} local=(${(hit ? hit.x : doc.x).toFixed(1)}, ${(hit ? hit.y : doc.y).toFixed(1)})`,
         `pressure=${pressureOf(e).toFixed(3)} coalesced=${coalescedCount} zoom=${viewport.zoom} pan=(${viewport.panX},${viewport.panY}) dpr=${viewport.dpr}`,
-        `strokes=${hooks.getStrokes().length} active=${active.size} pen=${policy.isPenDetected() ? 'seen' : 'no'} finger=${policy.fingerDrawingEnabled() ? 'on' : 'off'}`,
+        `strokes=${pages ? (hit ? (pages[hit.index].strokes?.length ?? 0) : 0) : hooks.getStrokes().length} active=${active.size} pen=${policy.isPenDetected() ? 'seen' : 'no'} finger=${policy.fingerDrawingEnabled() ? 'on' : 'off'}`,
       ].join('\n'),
     );
   }
@@ -340,8 +502,7 @@ export function createDrawingSurface(canvas, viewport, hooks) {
         dist: Math.hypot(a.x - b.x, a.y - b.y),
       },
     );
-    repaintAll();
-    if (hooks.onViewportChange) hooks.onViewportChange();
+    afterViewChange();
   }
 
   // Discard an in-flight stroke without committing it.
@@ -420,6 +581,21 @@ export function createDrawingSurface(canvas, viewport, hooks) {
       }
     }
 
+    // Which page did the gesture start on? All stroke data is page-local, so
+    // the page is resolved ONCE, here, and the gesture stays on it.
+    const pages = pagesNow();
+    const doc = docPoint(e);
+    const hit = pages ? resolvePageAt(pages, doc.x, doc.y) : null;
+    if (pages && !hit) {
+      // The table, a gap between pages, or outside the document: there is
+      // nothing to write on. Do not capture the pointer, so the browser can
+      // still scroll normally on a trackpad.
+      reportDebug(e, 'down (outside a page)', 1);
+      return;
+    }
+    const pageIndex = pages ? hit.index : 0;
+    const rect = pages ? pageRect(pages, pageIndex) : null;
+
     try {
       canvas.setPointerCapture(e.pointerId);
     } catch (err) {
@@ -431,6 +607,10 @@ export function createDrawingSurface(canvas, viewport, hooks) {
     const selecting = tool.kind === 'select' && !erasing;
     const shaping = tool.kind === 'shape' && !erasing;
     const typing = tool.kind === 'text' && !erasing;
+    // The select tool has two modes: a freeform lasso (the default) and a
+    // dragged rectangle. The rectangle is collected here so the UI only has
+    // to ask for it.
+    const selectBox = selecting && tool.options.mode === 'boxed';
 
     // A shape or a lasso gesture collects a path instead of ink.
     const shapeDraft = shaping
@@ -460,19 +640,24 @@ export function createDrawingSurface(canvas, viewport, hooks) {
           }),
       erasing,
       selecting,
+      selectBox,
+      box: selectBox ? { x0: 0, y0: 0, x1: 0, y1: 0 } : null,
       typing,
       shape: shapeDraft,
       path: [],
       renderedPieces: 0,
       coalescedTotal: 0,
       pointerType: e.pointerType,
+      pageIndex,
+      rect,
     };
     active.set(e.pointerId, entry);
+    if (pages && typeof hooks.onActivePage === 'function') hooks.onActivePage(pageIndex);
 
     const list = coalescedList(e);
     entry.coalescedTotal += list.length;
     for (const ce of list) {
-      const pt = toPagePoint(ce);
+      const pt = toPagePoint(ce, rect);
       if (erasing || selecting || typing) entry.path.push({ x: pt.x, y: pt.y });
       else if (shaping) {
         entry.shape.x0 = pt.x;
@@ -482,9 +667,12 @@ export function createDrawingSurface(canvas, viewport, hooks) {
         entry.shape.path.push({ x: pt.x, y: pt.y });
       } else addPoint(entry.stroke, pt.x, pt.y, pt.pressure);
     }
+    if (selectBox && entry.path.length > 0) {
+      const p0 = entry.path[0];
+      entry.box = { x0: p0.x, y0: p0.y, x1: p0.x, y1: p0.y };
+    }
     if (!erasing && !selecting && !shaping && !typing) {
-      applyTransform(ctx, viewport);
-      paintNewPieces(ctx, entry.stroke, entry);
+      withPage(rect, (c2) => paintNewPieces(c2, entry.stroke, entry));
     }
     reportDebug(
       e,
@@ -509,8 +697,17 @@ export function createDrawingSurface(canvas, viewport, hooks) {
       policy.notePenSeen();
       // Hovering (no buttons) -> show the cursor ring, never draw.
       if (e.buttons === 0) {
-        const pt = toPagePoint(e);
-        hooks.onPenHover({ x: pt.x, y: pt.y, pressure: pt.pressure });
+        const doc = docPoint(e);
+        const pages = pagesNow();
+        const hit = pages ? resolvePageAt(pages, doc.x, doc.y) : null;
+        const rect = hit ? pageRect(pages, hit.index) : null;
+        const local = toPagePoint(e, rect);
+        hooks.onPenHover({
+          x: local.x,
+          y: local.y,
+          pressure: local.pressure,
+          pageIndex: hit ? hit.index : null,
+        });
         reportDebug(e, 'hover(pen)', 1);
         return;
       }
@@ -539,8 +736,7 @@ export function createDrawingSurface(canvas, viewport, hooks) {
         const p = screenPoint(e);
         viewport.panX = panBase.panX + (p.x - panBase.x);
         viewport.panY = panBase.panY + (p.y - panBase.y);
-        repaintAll();
-        if (hooks.onViewportChange) hooks.onViewportChange();
+        afterViewChange();
         return;
       }
     }
@@ -554,7 +750,9 @@ export function createDrawingSurface(canvas, viewport, hooks) {
     // A pen that turns into an eraser mid-gesture switches the stroke over.
     if (!entry.erasing && isPenEraseGesture(e)) {
       // Commit the ink drawn so far so no orphan line is left on the canvas.
-      if (entry.stroke && entry.stroke.points.length > 0) hooks.commitStroke(entry.stroke);
+      if (entry.stroke && entry.stroke.points.length > 0) {
+        hooks.commitStroke(entry.stroke, entry.pageIndex);
+      }
       entry.erasing = true;
       entry.path = entry.stroke ? entry.stroke.points.map((p) => ({ x: p.x, y: p.y })) : [];
       entry.stroke = null;
@@ -563,9 +761,10 @@ export function createDrawingSurface(canvas, viewport, hooks) {
     const list = coalescedList(e);
     entry.coalescedTotal += list.length;
     for (const ce of list) {
-      const pt = toPagePoint(ce);
-      if (entry.erasing || entry.selecting || entry.typing) entry.path.push({ x: pt.x, y: pt.y });
-      else if (entry.shape) {
+      const pt = toPagePoint(ce, entry.rect);
+      if (entry.erasing || entry.selecting || entry.typing) {
+        entry.path.push({ x: pt.x, y: pt.y });
+      } else if (entry.shape) {
         entry.shape.x1 = pt.x;
         entry.shape.y1 = pt.y;
         entry.shape.snap = !e.shiftKey;
@@ -575,33 +774,59 @@ export function createDrawingSurface(canvas, viewport, hooks) {
     if (entry.shape) {
       // Redraw the scene and lay the shape preview on top.
       repaintAll();
-      applyTransform(ctx, viewport);
       const tool = getCurrentTool();
       const draft = buildShape(entry.shape, tool);
-      renderShape(ctx, draft);
+      withPage(entry.rect, (c2) => renderShape(c2, draft));
     } else if (entry.selecting) {
-      // The lasso trail, so the gesture is visible while it is happening.
-      if (entry.path.length > 1) {
-        applyTransform(ctx, viewport);
-        ctx.save();
-        ctx.setLineDash([5, 4]);
-        ctx.strokeStyle = '#0a84ff';
-        ctx.lineWidth = 1.5;
-        ctx.beginPath();
-        ctx.moveTo(entry.path[0].x, entry.path[0].y);
-        for (const p of entry.path) ctx.lineTo(p.x, p.y);
-        ctx.stroke();
-        ctx.restore();
+      if (entry.selectBox) {
+        // Boxed selection: draw the rectangle the user is dragging.
+        const p = entry.path[entry.path.length - 1];
+        if (p) {
+          entry.box.x1 = p.x;
+          entry.box.y1 = p.y;
+        }
+        const b = normalizedBox(entry.box);
+        if (b) {
+          withPage(entry.rect, (c2) => {
+            c2.save();
+            c2.setLineDash([6, 5]);
+            c2.strokeStyle = '#0a84ff';
+            c2.lineWidth = 1.5 / viewport.zoom;
+            c2.strokeRect(b.x, b.y, b.w, b.h);
+            c2.restore();
+          });
+        }
+      } else if (entry.path.length > 1) {
+        // The lasso trail, so the gesture is visible while it is happening.
+        withPage(entry.rect, (c2) => {
+          c2.save();
+          c2.setLineDash([5, 4]);
+          c2.strokeStyle = '#0a84ff';
+          c2.lineWidth = 1.5 / viewport.zoom;
+          c2.beginPath();
+          c2.moveTo(entry.path[0].x, entry.path[0].y);
+          for (const p of entry.path) c2.lineTo(p.x, p.y);
+          c2.stroke();
+          c2.restore();
+        });
       }
     } else if (!entry.erasing && !entry.typing) {
-      applyTransform(ctx, viewport);
-      paintNewPieces(ctx, entry.stroke, entry);
+      withPage(entry.rect, (c2) => paintNewPieces(c2, entry.stroke, entry));
     }
     reportDebug(
       e,
       entry.erasing ? 'move(erase)' : entry.selecting ? 'move(select)' : entry.shape ? 'move(shape)' : 'move',
       list.length,
     );
+  }
+
+  function normalizedBox(box) {
+    if (!box) return null;
+    const x = Math.min(box.x0, box.x1);
+    const y = Math.min(box.y0, box.y1);
+    const w = Math.abs(box.x1 - box.x0);
+    const h = Math.abs(box.y1 - box.y0);
+    return { x, y, w, h };
   }
 
   // Shared finish path for pointerup, pointercancel, lostpointercapture.
@@ -642,12 +867,23 @@ export function createDrawingSurface(canvas, viewport, hooks) {
     }
     if (entry.erasing) {
       reportDebug(e, `${kind} (erase path, ${entry.path.length} pts)`, 0);
-      hooks.erasePath(entry.path);
+      hooks.erasePath(entry.path, entry.pageIndex);
       return;
     }
     if (entry.selecting) {
+      if (entry.selectBox) {
+        const b = normalizedBox(entry.box);
+        // A click with nothing dragged is a deselect, not an empty box.
+        if (b && (b.w >= 3 || b.h >= 3) && hooks.onSelectBox) {
+          reportDebug(e, `${kind} (select box ${Math.round(b.w)}x${Math.round(b.h)})`, 0);
+          hooks.onSelectBox(b, entry.pageIndex);
+          return;
+        }
+        if (hooks.onLasso) hooks.onLasso([], entry.pageIndex);
+        return;
+      }
       reportDebug(e, `${kind} (lasso, ${entry.path.length} pts)`, 0);
-      if (hooks.onLasso) hooks.onLasso(entry.path);
+      if (hooks.onLasso) hooks.onLasso(entry.path, entry.pageIndex);
       return;
     }
     if (entry.typing) {
@@ -655,12 +891,15 @@ export function createDrawingSurface(canvas, viewport, hooks) {
       const first = entry.path[0];
       const last = entry.path[entry.path.length - 1] || first;
       if (first && hooks.onTextBox) {
-        hooks.onTextBox({
-          x: Math.min(first.x, last.x),
-          y: Math.min(first.y, last.y),
-          w: Math.abs(last.x - first.x),
-          h: Math.abs(last.y - first.y),
-        });
+        hooks.onTextBox(
+          {
+            x: Math.min(first.x, last.x),
+            y: Math.min(first.y, last.y),
+            w: Math.abs(last.x - first.x),
+            h: Math.abs(last.y - first.y),
+          },
+          entry.pageIndex,
+        );
       }
       return;
     }
@@ -677,22 +916,23 @@ export function createDrawingSurface(canvas, viewport, hooks) {
         return;
       }
       reportDebug(e, `${kind} (shape ${shape.shape}, ${shape.points.length} pts)`, 0);
-      hooks.commitStroke(shape);
+      hooks.commitStroke(shape, entry.pageIndex);
       return;
     }
-    applyTransform(ctx, viewport);
-    if (entry.stroke && isTextured(entry.stroke)) {
-      // The textured path already includes the closing run.
-      drawStrokePath(ctx, entry.stroke);
-    } else {
-      drawTail(ctx, entry.stroke);
-    }
+    withPage(entry.rect, (c2) => {
+      if (entry.stroke && isTextured(entry.stroke)) {
+        // The textured path already includes the closing run.
+        drawStrokePath(c2, entry.stroke);
+      } else {
+        drawTail(c2, entry.stroke);
+      }
+    });
     const n = entry.stroke.points.length;
     if (n === 0) {
       reportDebug(e, `${kind} (discarded: no points)`, 0);
       return;
     }
-    hooks.commitStroke(entry.stroke);
+    hooks.commitStroke(entry.stroke, entry.pageIndex);
     reportDebug(e, `${kind} (committed, ${n} pts, ${entry.coalescedTotal} coalesced)`, 0);
   }
 
@@ -703,7 +943,7 @@ export function createDrawingSurface(canvas, viewport, hooks) {
   canvas.addEventListener('lostpointercapture', (e) => finishStroke(e, 'lostcapture'));
   canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
-  // Wheel / trackpad. A plain wheel scrolls the page (like Notability and
+  // Wheel / trackpad. A plain wheel scrolls the document (like Notability and
   // Excalidraw); ctrl+wheel is the trackpad pinch gesture and zooms about
   // the cursor.
   canvas.addEventListener(
@@ -719,13 +959,11 @@ export function createDrawingSurface(canvas, viewport, hooks) {
         // 0.0025 keeps a physical ctrl+wheel notch at ~1.28x while still
         // feeling smooth for a trackpad pinch (which sends tiny deltas).
         if (zoomAt(viewport, p.x, p.y, Math.exp(-dy * 0.0025))) {
-          repaintAll();
-          if (hooks.onViewportChange) hooks.onViewportChange();
+          afterViewChange();
         }
       } else {
         panBy(viewport, -dx, -dy);
-        repaintAll();
-        if (hooks.onViewportChange) hooks.onViewportChange();
+        afterViewChange();
       }
     },
     { passive: false },
@@ -734,6 +972,19 @@ export function createDrawingSurface(canvas, viewport, hooks) {
   return {
     resize,
     redraw,
+    clampView,
+    // Move the DOCUMENT point (x, y) to the top-left of the viewport. Used by
+    // the page navigator, the scrollbar and the boot-time "fit the page"
+    // step; it clamps, repaints and notifies, so callers never touch pan
+    // directly.
+    panTo({ x, y } = {}) {
+      if (Number.isFinite(x)) viewport.panX = -x * viewport.zoom;
+      if (Number.isFinite(y)) viewport.panY = -y * viewport.zoom;
+      afterViewChange();
+    },
+    viewChanged() {
+      afterViewChange();
+    },
     activeCount: () => active.size,
     setDebugEnabled(on) {
       debugOn = on;

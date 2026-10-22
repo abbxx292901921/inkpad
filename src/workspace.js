@@ -11,7 +11,8 @@
 // AUTOSAVE: any change marks the note dirty and schedules a save. Saving is
 // debounced so a burst of strokes writes once.
 
-import { createNote, createPage, pageHasContent } from './pages.js';
+import { createNote, createPage, createImageLayer, removeLayer, pageHasContent } from './pages.js';
+import { cloneStroke } from './strokes.js';
 import * as storage from './storage.js';
 import { pageToPngBlob } from './export.js';
 
@@ -245,14 +246,84 @@ export function createWorkspace({ onChange } = {}) {
     notify();
   }
 
-  function addPage() {
+  function addPage({ select = true } = {}) {
     if (!ws.current) return;
-    const page = createPage({ name: `Page ${ws.current.pages.length + 1}` });
+    const page = createPage({
+      name: `Page ${ws.current.pages.length + 1}`,
+      template: ws.current.template ?? 'lined',
+    });
     ws.current.pages.push(page);
-    ws.pageIndex = ws.current.pages.length - 1;
+    if (select) ws.pageIndex = ws.current.pages.length - 1;
     markDirty();
     notify();
     return page;
+  }
+
+  // Duplicate a page IN PLACE, directly after its source. The ink is copied
+  // (new ids, own points) and so are the layers; the blob is shared, the
+  // object URL is not, so deleting one page never blanks the other.
+  function duplicatePage(index, { onLayerLoad } = {}) {
+    if (!ws.current) return null;
+    const source = ws.current.pages[index];
+    if (!source) return null;
+    const copy = createPage({
+      name: `${source.name ?? 'Page'} copy`,
+      w: source.w,
+      h: source.h,
+      template: source.template,
+    });
+    copy.strokes = (source.strokes ?? []).map(cloneStroke);
+    copy.layers = (source.layers ?? []).map((layer) => {
+      if (!layer.blob || typeof URL === 'undefined' || typeof Image === 'undefined') {
+        // No blob (or no browser): the layer cannot be re-hydrated, so skip
+        // it rather than share an object URL that removeLayer() revokes.
+        return null;
+      }
+      const dup = createImageLayer({
+        blob: layer.blob,
+        url: URL.createObjectURL(layer.blob),
+        name: layer.name,
+        kind: layer.kind,
+        rect: layer.rect,
+      });
+      if (layer.pageNumber != null) dup.pageNumber = layer.pageNumber;
+      dup.onLoad = () => {
+        if (onLayerLoad) onLayerLoad(dup);
+        else notify();
+      };
+      return dup;
+    }).filter(Boolean);
+    ws.current.pages.splice(index + 1, 0, copy);
+    ws.pageIndex = index + 1;
+    markDirty();
+    notify();
+    return copy;
+  }
+
+  // Remove a page. A note always keeps at least one sheet, so removing the
+  // last page CLEARS it instead of leaving an empty document.
+  function removePage(index) {
+    if (!ws.current) return null;
+    const page = ws.current.pages[index];
+    if (!page) return null;
+    if (ws.current.pages.length === 1) {
+      page.strokes.length = 0;
+      for (const layer of [...page.layers]) removeLayer(page, layer.id);
+      ws.pageIndex = 0;
+      markDirty();
+      notify();
+      return page;
+    }
+    const [removed] = ws.current.pages.splice(index, 1);
+    for (const layer of [...removed.layers]) removeLayer(removed, layer.id);
+    if (ws.pageIndex >= ws.current.pages.length) {
+      ws.pageIndex = ws.current.pages.length - 1;
+    } else if (ws.pageIndex > index) {
+      ws.pageIndex -= 1;
+    }
+    markDirty();
+    notify();
+    return removed;
   }
 
   // --- folders -------------------------------------------------------------
@@ -372,6 +443,8 @@ export function createWorkspace({ onChange } = {}) {
     save,
     setPage,
     addPage,
+    duplicatePage,
+    removePage,
     saveFolder,
     createFolder,
     renameFolder,

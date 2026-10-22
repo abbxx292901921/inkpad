@@ -153,38 +153,54 @@ export function buildToolbar(root, actions) {
 
   bar.appendChild(rightPill);
 
-  // ------------------------------------------------------------- pages pill
-  const pagesPill = el('div', 'pill pill-pages');
+  // ------------------------------------------------------------- back pill
+  // Top-left on its own, like the reference: the page navigator moved to the
+  // bottom of the screen when the document became scrollable.
+  const backPill = el('div', 'pill pill-back');
   const backBtn = button('ticon', {
     label: 'All notes',
     title: 'All notes',
     onClick: () => actions.onBack(),
   });
   backBtn.appendChild(icon('library'));
-  pagesPill.appendChild(backBtn);
-  pagesPill.appendChild(divider());
+  backPill.appendChild(backBtn);
+  bar.appendChild(backPill);
+
+  // ------------------------------------------------------------- pages pill
+  // Rendered here but MOUNTED by the app in #bottomnav (bottom centre), so it
+  // does not fight the tool island for the top bar.
+  const pagesPill = el('div', 'pill pill-pages');
   const prevBtn = button('ticon', {
     label: 'Previous page',
     title: 'Previous page',
     onClick: () => actions.onPrevPage(),
   });
-  prevBtn.appendChild(icon('back'));
+  prevBtn.appendChild(icon('chevronUp'));
   const pageLabel = el('span', 'page-label', '1 / 1');
   const nextBtn = button('ticon', {
     label: 'Next page',
     title: 'Next page',
     onClick: () => actions.onNextPage(),
   });
-  nextBtn.appendChild(icon('chevronRight'));
+  nextBtn.appendChild(icon('chevronDown'));
   pagesPill.appendChild(prevBtn);
   pagesPill.appendChild(pageLabel);
   pagesPill.appendChild(nextBtn);
-  bar.appendChild(pagesPill);
 
   root.appendChild(bar);
 
   // ------------------------------------------------------------------ state
   let expanded = false;
+
+  function setPage(index = 0, count = 1) {
+    pageLabel.textContent = `${index + 1} / ${count}`;
+    prevBtn.disabled = index <= 0;
+    nextBtn.disabled = index >= count - 1;
+    // With one page there is nothing to navigate, and the pill would just
+    // hover over the canvas for no reason.
+    pagesPill.classList.toggle('is-solo', count <= 1);
+  }
+  setPage(0, 1);
 
   function setExpanded(on) {
     expanded = on;
@@ -196,7 +212,10 @@ export function buildToolbar(root, actions) {
 
   return {
     element: bar,
+    pagesElement: pagesPill,
+    backElement: backPill,
     setExpanded,
+    setPage,
     isExpanded: () => expanded,
     update(state) {
       for (const [id, b] of toolBtns) {
@@ -238,14 +257,7 @@ export function buildToolbar(root, actions) {
         strokeGlyph.style.setProperty('--stroke-w', `${w}px`);
       }
       // Page navigation.
-      const count = state.pageCount ?? 1;
-      const index = state.pageIndex ?? 0;
-      pageLabel.textContent = `${index + 1} / ${count}`;
-      prevBtn.disabled = index <= 0;
-      nextBtn.disabled = index >= count - 1;
-      // The pill hides itself when there is nothing to navigate, but the
-      // library button always stays.
-      pagesPill.classList.toggle('is-solo', count <= 1);
+      setPage(state.pageIndex ?? 0, state.pageCount ?? 1);
     },
   };
 }

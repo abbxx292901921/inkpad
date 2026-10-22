@@ -14,6 +14,11 @@
 // Pages are plain data. Rendering lives in src/canvas.js; persistence
 // (IndexedDB) comes in a later phase.
 
+// The page's own geometry lives on the page (a PDF page keeps its aspect),
+// so the model needs the A4 default. layout.js is DOM-free, so this stays
+// importable in Node.
+import { DEFAULT_PAGE_W, DEFAULT_PAGE_H } from './layout.js';
+
 let nextId = 1;
 
 function makeId(prefix) {
@@ -28,16 +33,24 @@ function makeId(prefix) {
   return `${prefix}-${Date.now()}-${nextId}`;
 }
 
-export function createPage({ name = 'Page 1' } = {}) {
-  return {
+// A page keeps its OWN width and height, plus the paper template it is drawn
+// with. Both are optional on old records; layout.js falls back to A4/blank.
+export function createPage({ name = 'Page 1', w, h, template } = {}) {
+  const page = {
     id: makeId('page'),
     name,
+    // Ruling is the Notability default; 'blank' is for imported PDF pages,
+    // whose raster already covers the sheet.
+    template: typeof template === 'string' ? template : 'lined',
+    w: Number.isFinite(w) && w > 0 ? w : DEFAULT_PAGE_W,
+    h: Number.isFinite(h) && h > 0 ? h : DEFAULT_PAGE_H,
     layers: [],
     strokes: [],
   };
+  return page;
 }
 
-export function createNote({ title = 'Untitled', folderId = null } = {}) {
+export function createNote({ title = 'Untitled', folderId = null, template = 'lined' } = {}) {
   const now = Date.now();
   return {
     id: makeId('note'),
@@ -45,7 +58,9 @@ export function createNote({ title = 'Untitled', folderId = null } = {}) {
     folderId,
     createdAt: now,
     updatedAt: now,
-    pages: [createPage()],
+    // The template new pages inherit. Existing pages keep their own.
+    template,
+    pages: [createPage({ template })],
   };
 }
 

@@ -83,8 +83,11 @@ export async function rasterizePdf(file, { onProgress } = {}) {
       const canvas = document.createElement('canvas');
       canvas.width = Math.max(1, Math.ceil(viewport.width));
       canvas.height = Math.max(1, Math.ceil(viewport.height));
+      const canvasContext = canvas.getContext('2d', { alpha: false });
 
-      await pdfPage.render({ canvas, viewport }).promise;
+      // pdf.js renders through a canvas CONTEXT, not the element: passing
+      // `{ canvas }` leaves it with nothing to draw into.
+      await pdfPage.render({ canvasContext, viewport }).promise;
 
       const blob = await new Promise((resolve) => {
         canvas.toBlob((b) => resolve(b), 'image/png');

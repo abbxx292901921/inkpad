@@ -62,6 +62,16 @@ export function addPoint(stroke, x, y, pressure) {
   return stroke.points.length;
 }
 
+// A copy with a NEW id and its own point objects. Duplicating a page must not
+// share strokes: undo, erase and transforms identify a stroke by its id.
+export function cloneStroke(stroke) {
+  return {
+    ...stroke,
+    id: makeId(),
+    points: (stroke.points ?? []).map((p) => ({ ...p })),
+  };
+}
+
 // Normalize PointerEvent pressure. 0/undefined means "no pressure data"
 // (mouse, some touch screens) -> fallback 0.5. Pen data passes through.
 export function pressureOf(rawEvent) {

@@ -43,9 +43,18 @@ Regenerate the service worker's precache list after adding a file:
 - `src/canvas.js` — Pointer Events handling + SYNCHRONOUS incremental drawing.
   Ink tools paint inside the pointermove handler; the eraser collects a path
   and calls `erasePath()`; the shape tool draws a preview; the select tool
-  collects a lasso path.
+  collects a lasso path (or a marquee, in `boxed` mode); the text tool collects
+  a box. Multi-page: a gesture is PINNED to the page it started on and every
+  point is converted to that page's LOCAL coordinates. `createDrawingSurface`
+  takes an optional `{ paper }` canvas (see "Rendering model").
+- `src/layout.js` — the geometry of the scrollable document: page stacking,
+  document space, viewport culling, pan clamping, and the sheet painter.
+  DOM-free. `DEFAULT_PAGE_W=794`, `DEFAULT_PAGE_H=1123`, `PAGE_GAP=28`,
+  `PAGE_MARGIN=24`; `pageSize`, `pageOffsets`, `pageRect`, `docSize`,
+  `resolvePageAt`, `visiblePages`, `clampPan`, `drawPageSheet`.
 - `src/strokes.js` — stroke data model (vector) + render helpers + undo/redo
-  history + eraser hit-testing + transform snapshots.
+  history + eraser hit-testing + transform snapshots + `cloneStroke` (used
+  when a page is duplicated).
 - `src/shapes.js` — shape geometry. A shape IS a stroke: its points are the
   VERTICES, so undo, persistence, export and hit-testing work on it for
   free. Two DRAW modes: `boxed` (drag a rectangle, the shape is fitted into
@@ -59,10 +68,12 @@ Regenerate the service worker's precache list after adding a file:
 - `src/transform.js` — bounds, move/scale/rotate maths for the selection.
 - `src/tools.js` — tool registry: pen, marker, pencil, shape, select, eraser.
   Per-tool options (`{ color, width, opacity, lineStyle, pressureTaper }` for
-  ink, `{ shape, fill }` for shapes, `{ radius }` for the eraser).
+  ink, `{ shape, mode, fill }` for shapes, `{ mode: 'freeform'|'boxed' }` for
+  select, `{ radius }` for the eraser).
   `supportsLineStyle(id)` is false for the translucent marker.
 - `src/pages.js` — the document model. A note owns pages; a page owns
   `layers` (imported files, drawn UNDER the ink) and `strokes` (the ink).
+  A page also carries `w`, `h` and `template` (its own sheet size and ruling).
 - `src/pdf.js` — PDF import via the vendored pdf.js. Each PDF page is
   rasterised to a PNG and becomes a page of the note.
 - `src/export.js` — PNG export and the print view (Save as PDF).
@@ -91,7 +102,7 @@ Regenerate the service worker's precache list after adding a file:
 - `sw.js` — the service worker (classic script, at the repo root).
 - `tools/gen-precache.mjs` — regenerates the service worker's precache list.
 - `tests/` — the test suite. Plain Node scripts, no framework, no
-  dependencies: `node tests/run-all.mjs` runs all ten suites (494 checks).
+  dependencies: `node tests/run-all.mjs` runs all sixteen suites (1017 checks).
   Every suite prints `ALL N CHECKS PASSED` and exits non-zero on the first
   failure, so they work in CI as-is.
 - `design/notability-ui-spec.md` — the Notability UI rebuild spec, transcribed
@@ -101,23 +112,59 @@ Regenerate the service worker's precache list after adding a file:
   their licences, and which ones are off limits.
 
 ## Document model
-- Note = `{ id, title, folderId, createdAt, updatedAt, pages[] }`
-- Page = `{ id, name, layers[], strokes[] }`
+- Note = `{ id, title, folderId, template, createdAt, updatedAt, pages[] }`
+- Page = `{ id, name, template, w, h, layers[], strokes[] }`
+- `w`/`h` are the page's OWN sheet size (a PDF page keeps its aspect ratio);
+  `template` is `blank | lined | grid | dotted`. Both are optional on old
+  records — `layout.pageSize()` falls back to A4 and the painter to blank.
 - Layer = an imported file drawn UNDER the ink: `{ id, kind: 'image'|'pdf',
   name, blob, url, img, naturalWidth, naturalHeight, loaded, rect }`. The blob
-  is kept so IndexedDB can store it later. `rect` is the layer's PAGE-space
+  is kept so IndexedDB can store it later. `rect` is the layer's PAGE-LOCAL
   rectangle, so it pans and zooms WITH the ink.
 - Render order is **layers -> strokes**. That is the whole point: importing
   your homework and writing on top of it is the normal case.
-- A layer is placed at the visible page area at import time, contain-fitted.
-  A layer with no rect falls back to being fitted to the screen.
+- A layer is placed at the visible area of the ACTIVE page at import time,
+  contain-fitted. A layer with no rect falls back to being fitted to its page.
+
+## Multi-page document (phase A contracts)
+The editor is ONE scrollable document: pages stacked vertically on a table.
+- **Page coordinates are LOCAL to their page.** A stroke at (10, 20) is 10pt
+  from the left edge of ITS page. Inserting, deleting or reordering a page
+  never rewrites ink. All tools, history, hit-testing and export keep working
+  in page units.
+- **Document space** is what the viewport pans/zooms. `layout.js` maps a page
+  index to its document rect; `coord.js` stays doc<->screen only.
+- `createDrawingSurface(canvas, viewport, hooks, { paper })` hooks:
+  `getPages()`, `onActivePage(index)`, `commitStroke(stroke, pageIndex)`,
+  `erasePath(path, pageIndex)`, `onLasso(path, pageIndex)`,
+  `onSelectBox(box, pageIndex)`, `onTextBox(box, pageIndex)`,
+  `onPenHover({ x, y, pressure, pageIndex })`, `onViewportChange()`.
+  `getStrokes()`/`getLayers()` are the LEGACY single-page fallback, used only
+  when `getPages` is absent (the integration suite).
+- A new gesture resolves the page under the pointer ONCE and pins the rest of
+  the gesture to it; points outside the sheet are clipped by the page clip.
+  A pointerdown on the table or in a gap starts nothing (one-finger pan and
+  pinch still work).
+- **Auto-append**: committing a stroke that reaches within
+  `AUTO_APPEND_MARGIN` (56pt) of the bottom of the LAST page appends a blank
+  page below, so writing never hits a wall. The active page does not change.
+- Page chrome: `#bottomnav` (prev / "N / M" / next) scrolls to a page with
+  `surface.panTo()`; `#scrollbar` (drag the thumb) and `fitPage()` use the same
+  path. `workspace.addPage({ select })`, `duplicatePage(index)`,
+  `removePage(index)` (clearing instead when it is the last page).
+- History entries are bound to the page's strokes array (`onPage()` in
+  app.js), so Undo after scrolling to another sheet still reverses the edit
+  that was actually made.
 
 ## File import
 - `<input id="file-input" type="file" accept="image/*,application/pdf">`,
   hidden, opened by the `+` button in the tool island.
-- Images become a page layer immediately. PDFs are detected and refused with
-  a toast: PDF import needs **pdf.js** vendored, which needs the user's OK
-  (AGENTS.md says "no dependencies").
+- Images become a layer of the ACTIVE page, contain-fitted into the visible
+  area of that sheet, so they pan and zoom with the ink.
+- PDFs are rasterised page by page with the vendored pdf.js; each PDF page
+  becomes a notebook page at the A4 width, keeping its own aspect ratio, with
+  the raster as a full-sheet layer. pdf.js renders through a canvas CONTEXT
+  (`render({ canvasContext, viewport })`), not the canvas element.
 
 ## AI providers (phase I1)
 Multi-provider BYOK, in `src/ai/`. The user picks the provider; the app
@@ -154,12 +201,21 @@ internal endpoints and Google explicitly prohibits reverse-engineering the
 Services; use a normal API key from AI Studio instead.
 
 ## Coordinate system
-One page-coordinate space. `screenToPage()` / `pageToScreen()` in `src/coord.js`
-convert between CSS pixels (relative to canvas top-left) and page coords using
-`viewport = { zoom, panX, panY, dpr }`. devicePixelRatio is applied ONLY in
-`applyTransform()` (canvas backing-store scale). Pan and zoom MUTATE the
-viewport; `zoomAt`, `panBy` and `applyPinch` in coord.js are the only places
-that change it. Zoom is clamped to 0.25-8x.
+Two spaces, one conversion module:
+- **Document space** — the table the pages sit on. `coord.js` converts CSS
+  pixels (relative to the canvas top-left) <-> document coords via
+  `viewport = { zoom, panX, panY, dpr }`. `layout.js` maps pages into this
+  space.
+- **Page-local space** — where all ink lives. `layout.resolvePageAt()` returns
+  the local point, and `canvas.js` subtracts the page origin once at input.
+  The UI modules that speak screen pixels (selection, shape editor, pen ring)
+  are handed `pageViewport(index)` — the live viewport shifted by the page's
+  origin — so `pageToScreen(local)` lands correctly.
+devicePixelRatio is applied ONLY in `applyTransform()` (canvas backing-store
+scale). Pan and zoom MUTATE the viewport; `zoomAt`, `panBy` and `applyPinch`
+in coord.js are the only places that change it. Zoom is clamped to 0.25-8x.
+Pan is clamped by `layout.clampPan()` against the whole document, and a
+document smaller than the screen is centred.
 
 Pan/zoom gestures:
 - Two-finger pinch/pan on touch. The transform is computed from the gesture
@@ -195,6 +251,18 @@ Pan/zoom gestures:
   or the re-stroke would stack its alpha and darken the marker.
 
 ## Rendering model (do not regress)
+**Two canvases.** `#paper` underneath carries the sheets, their ruling and the
+imported layers; `#page` on top is transparent and carries only ink.
+`createDrawingSurface(canvas, viewport, hooks, { paper })` wires both. The
+split is REQUIRED: translucent ink is drawn with `destination-over`, so a
+sheet painted on the same canvas would hide the marker. Never draw the paper
+on the ink canvas.
+
+Per repaint, in order: clear both -> visible sheets (`drawPageSheet`) + layers
+per visible page on the paper canvas -> committed ink per visible page on the
+ink canvas (clipped to the sheet) -> in-progress strokes.
+`visiblePages()` culls, so a 200-page PDF costs only the pages on screen.
+
 `strokes.js` renders a stroke as a chain of quadratic PIECES (the
 "midpoint-forward" scheme) over the point list:
 - piece 1: `p0` --(control p1)--> `mid(p1,p2)`
@@ -227,6 +295,9 @@ Rules:
 - `repaintAll()` (inside the surface) redraws committed strokes AND any stroke
   that is still in progress. A committed-only redraw would wipe the line the
   user is drawing right now, so never replace it with a committed-only repaint.
+- Gestures are pinned to a page: `entry.rect` is resolved at pointerdown, and
+  every point is converted into that page's local space. Drawing is clipped to
+  the sheet, so ink never spills onto the table or the next page.
 
 ## iPad / Apple Pencil rules (phase B)
 - **Draw SYNCHRONOUSLY inside the pointermove handler.** iPadOS Safari drops
