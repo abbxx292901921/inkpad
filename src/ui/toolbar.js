@@ -135,6 +135,14 @@ export function buildToolbar(root, actions) {
   rightPill.appendChild(redoBtn);
   rightPill.appendChild(divider());
 
+  const aiBtn = button('ticon ticon-ai', {
+    label: 'Ask AI',
+    title: 'Ask AI about this page',
+    onClick: (e) => actions.onAskAi(e.currentTarget),
+  });
+  aiBtn.appendChild(icon('sparkle'));
+  rightPill.appendChild(aiBtn);
+
   const fingerBtn = button('ticon', { label: 'Finger drawing', title: 'Finger drawing', onClick: () => actions.onToggleFingerDrawing() });
   rightPill.appendChild(fingerBtn);
   rightPill.appendChild(divider());

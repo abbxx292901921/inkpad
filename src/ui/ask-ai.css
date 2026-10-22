@@ -1,0 +1,166 @@
+/* ui/ask-ai.css — the "Ask AI" panel.
+   Loaded at runtime by ask-ai.js (no bundler, so the stylesheet is injected
+   with a <link> and guarded by an id). */
+
+.ai {
+  width: min(440px, calc(100vw - 32px));
+  background: #fff;
+  border-radius: var(--radius-card, 14px);
+  box-shadow: var(--card-shadow, 0 10px 34px rgba(0, 0, 0, 0.2));
+  padding: 16px;
+  color: var(--ink, #1b1b1b);
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.ai-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.ai-title {
+  font-size: 17px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.ai-provider {
+  margin-top: 2px;
+  font-size: 13px;
+  color: var(--muted, #8e8e93);
+}
+
+.ai-icon-btn {
+  width: 32px;
+  height: 32px;
+  min-width: 0;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--muted, #8e8e93);
+  cursor: pointer;
+}
+
+.ai-icon-btn:hover {
+  background: #f2f2f7;
+}
+
+.ai-label {
+  display: block;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--muted, #8e8e93);
+  margin-bottom: 6px;
+}
+
+.ai-prompt {
+  width: 100%;
+  min-height: 76px;
+  padding: 10px 12px;
+  border: 1px solid var(--hairline, #e5e5ea);
+  border-radius: 10px;
+  background: #fff;
+  color: var(--ink, #1b1b1b);
+  font-family: inherit;
+  /* 16px stops iOS Safari from zooming the page when the field is focused. */
+  font-size: 16px;
+  line-height: 1.4;
+  resize: vertical;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.ai-prompt:focus {
+  outline: 2px solid var(--accent, #0a84ff);
+  outline-offset: -1px;
+  border-color: var(--accent, #0a84ff);
+}
+
+.ai-hint {
+  margin-top: 6px;
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--muted, #8e8e93);
+}
+
+.ai-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.ai-btn {
+  min-height: 44px;
+  padding: 0 16px;
+  border: 1px solid var(--hairline, #e5e5ea);
+  border-radius: 10px;
+  background: #f2f2f7;
+  color: var(--ink, #1b1b1b);
+  font-family: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.ai-btn-primary {
+  background: var(--accent, #0a84ff);
+  border-color: var(--accent, #0a84ff);
+  color: #fff;
+}
+
+.ai-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.ai-empty-text {
+  margin: 0 0 12px;
+  font-size: 14px;
+  line-height: 1.45;
+  color: var(--muted, #8e8e93);
+}
+
+.ai-error {
+  margin-top: 10px;
+  padding: 9px 11px;
+  border-radius: 9px;
+  background: #fff2f2;
+  color: #b3261e;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.ai-error[hidden] {
+  display: none;
+}
+
+.ai-answer-wrap {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--hairline, #e5e5ea);
+}
+
+.ai-answer-wrap[hidden] {
+  display: none;
+}
+
+.ai-answer {
+  font-size: 15px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  -webkit-user-select: text;
+  user-select: text;
+  max-height: 40vh;
+  overflow: auto;
+}

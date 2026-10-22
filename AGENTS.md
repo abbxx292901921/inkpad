@@ -66,9 +66,13 @@ Regenerate the service worker's precache list after adding a file:
   (floating panel primitive + colour wheel), `toolbar.js` (the pill + island),
   `palette.js` (the "Colors" card), `stroke-panel.js` (the "Stroke" card),
   `shape-menu.js` (the shape picker), `selection.js` (the transform box),
-  `library.js` (the notes screen), `ruler.js` + `rotation-dial.js`.
+  `library.js` (the notes screen), `ruler.js` + `rotation-dial.js`,
+  `settings.js` (the AI providers sheet), `ask-ai.js` (the Ask AI panel),
+  `prompt.js` (text and list prompts).
   UI-only CSS lives beside its module and is injected at runtime — there is no
   bundler to bundle it.
+- `src/ai/` — the AI layer: `providers.js`, `client.js`, `presets.js`,
+  `models.js`. See "AI providers" below.
 - `src/coord.js` — the ONLY screen<->page conversion. Nothing else touches zoom/pan/dpr.
 - `sw.js` — the service worker (classic script, at the repo root).
 - `tools/gen-precache.mjs` — regenerates the service worker's precache list.
@@ -101,20 +105,33 @@ Regenerate the service worker's precache list after adding a file:
   a toast: PDF import needs **pdf.js** vendored, which needs the user's OK
   (AGENTS.md says "no dependencies").
 
-## AI providers (planned, phase I1)
-Multi-provider BYOK. `src/ai/` replaces the single `gemini.js`:
+## AI providers (phase I1)
+Multi-provider BYOK, in `src/ai/`. The user picks the provider; the app
+NEVER rotates between providers on its own, and never retries.
 - `providers.js` — 5 request/response kinds: `openai` (OpenAI Chat Completions:
   Groq, OpenRouter, NVIDIA NIM, Mistral, Cerebras, Together, OVH, Z.ai, Workers
   AI, LM Studio, Ollama), `gemini-generate`, `gemini-interactions`,
   `anthropic`, and `raw` (user-supplied body template + response path).
+  Also `describeKind(kind)`, which the settings UI uses for the defaults and
+  the help text.
 - `client.js` — one call path, typed errors (InvalidKey / RateLimited /
-  OutOfCredits / Network / Server / Parse). NO auto-rotation: the user picks the
-  provider manually.
-- `presets.js` — provider presets in `localStorage` (`inkpad.presets.v1`).
-  Preset = `{ id, label, kind, endpoint, modelsUrl, apiKey, model, auth,
-  extraHeaders, vision, requestTemplate, responseTextPath }`. Pure config, no
-  runtime state.
-- `models.js` — best-effort model list fetch; failure is non-fatal.
+  OutOfCredits / Network / Server / Parse / Cors / Aborted).
+- `presets.js` — provider presets in `localStorage` (`inkpad.presets.v1`, and
+  the active id in `inkpad.presets.active`). Preset = `{ id, label, kind,
+  endpoint, modelsUrl, apiKey, model, auth, extraHeaders, vision,
+  requestTemplate, responseTextPath }`. Pure config, no runtime state.
+- `models.js` — best-effort model list fetch; failure is non-fatal (the user
+  types the model name instead).
+- `src/ui/settings.js` — the provider settings sheet. `src/ui/ask-ai.js` — the
+  "Ask AI" panel (the sparkle button in the right pill).
+
+**CORS IS THE REAL LIMIT.** Most hosted provider APIs send no
+`Access-Control-Allow-Origin`, so a browser cannot call them with a key. The
+client turns that into an explicit `cors` error ("<Provider> blocks browser
+calls, so it needs a proxy") rather than a generic network failure. Gemini's
+`generativelanguage.googleapis.com` does allow browser calls; OpenAI and
+Anthropic do not. A small proxy (a Cloudflare Worker) is the fix if the user
+wants those.
 
 **NEVER** scrape or reuse the Google AI Studio web UI's session credentials
 (`SAPISIDHASH`, cookies, the `alkalimakersuite-pa.clients6.google.com` RPC
@@ -288,9 +305,8 @@ Rules:
 
 ## Known issues
 - (phase C) The library's "Record a lecture", "Find a template" and Gallery
-  are placeholders. Settings and the bell are placeholders too.
-- (phase C) Audio recording, templates, a text tool and the AI layer are not
-  built yet.
+  are placeholders. The bell and the "Daily Brain Break" card are decoration.
+- (phase C) Audio recording, templates and a text tool are not built.
 - (phase C) Folders can be created, renamed and deleted, but notes can only
   be moved to a folder from the more menu — not by dragging them in the
   library.
@@ -298,6 +314,12 @@ Rules:
   closing edge of a rectangle is not erasable.
 - (phase C) No keyboard shortcut for the tools yet (undo/redo are bound to
   Ctrl/Cmd+Z and Ctrl/Cmd+Shift+Z).
+- (phase C) OpenAI and Anthropic cannot be called from a browser at all
+  (no CORS headers). Gemini, Groq, OpenRouter and any local server can. A
+  proxy is the fix; that is a separate deployment and has not been built.
+- (phase C) The `gemini-interactions` provider kind is implemented against an
+  UNVERIFIED upstream shape. `responseTextPath` can override where the answer
+  is read.
 - (phase B) `pointerrawupdate` is not available in Safari/iPadOS, so latency on
   iPad relies on synchronous painting rather than raw pointer updates.
 - (phase B) The service worker is shipped, but the cache name must be bumped

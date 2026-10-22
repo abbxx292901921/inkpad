@@ -84,6 +84,10 @@ export const ICONS = {
       P('M7.4 16.6 L4.9 19.1'),
     ],
   },
+  // A four-pointed star, like the app's own mark: the "Ask AI" button.
+  sparkle: {
+    paths: [P('M12 2.5 L13.9 9.1 L20.5 11 L13.9 12.9 L12 19.5 L10.1 12.9 L3.5 11 L10.1 9.1 Z')],
+  },
   // Pen only / pen + finger, for the palm-rejection toggle.
   nib: { paths: [P('M12 2.5 L18.5 9 L12 21.5 L5.5 9 Z'), P('M12 2.5 L12 21.5')] },
   nibFinger: {

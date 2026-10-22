@@ -39,8 +39,22 @@ import {
 import { createImageLayer, addLayer, removeLayer, pageHasContent, createPage, containFit } from './pages.js';
 import { rasterizePdf } from './pdf.js';
 import { createWorkspace } from './workspace.js';
-import { downloadNoteAsPng, printNote } from './export.js';
+import { downloadNoteAsPng, printNote, pageRegionToDataUrl } from './export.js';
 import { registerServiceWorker } from './sw-register.js';
+import { buildAskAi } from './ui/ask-ai.js';
+import { buildSettings } from './ui/settings.js';
+import {
+  loadPresets,
+  addPreset,
+  updatePreset,
+  deletePreset,
+  setActivePreset,
+  getActivePresetId,
+  getPreset,
+} from './ai/presets.js';
+import { callProvider, describeError } from './ai/client.js';
+import { fetchModels } from './ai/models.js';
+import { describeKind, PROVIDER_KINDS } from './ai/providers.js';
 import { buildShapeMenu } from './ui/shape-menu.js';
 import { buildTextPrompt, buildListPrompt } from './ui/prompt.js';
 import { buildSelection } from './ui/selection.js';
@@ -608,6 +622,11 @@ const toolbar = buildToolbar(toolbarEl, {
     toggleFingerDrawing();
     syncUI();
   },
+  onAskAi: (anchor) => {
+    syncAi();
+    askAiPopover.open(anchor);
+    askAi.focus();
+  },
   onOpenMore: (anchor) => {
     if (morePopover.isOpen()) {
       morePopover.close();
@@ -844,6 +863,130 @@ function openFolderPicker() {
   listPromptPopover.open(toolbarEl.querySelector('.pill-right') || toolbarEl);
 }
 
+// --- AI ---------------------------------------------------------------------
+// The user picks the provider; the app never rotates between providers on
+// its own. Keys live in localStorage only and are never logged.
+
+const AI_KINDS = PROVIDER_KINDS.map((kind) => describeKind(kind));
+
+// The settings sheet is a full-screen overlay, so the anchor is only a hint.
+function settingsAnchor() {
+  return toolbarEl.querySelector('.pill-right') || toolbarEl;
+}
+
+const settings = buildSettings({
+  onSave: (preset, { isNew }) => {
+    if (isNew) addPreset(preset);
+    else updatePreset(preset.id, preset);
+    refreshSettings();
+    syncAi();
+  },
+  onDelete: (preset) => {
+    deletePreset(preset.id);
+    refreshSettings();
+    syncAi();
+  },
+  onSetActive: (id) => {
+    setActivePreset(id);
+    refreshSettings();
+    syncAi();
+  },
+  onTest: async (preset) => {
+    try {
+      await callProvider(preset, { messages: [{ role: 'user', content: 'Reply with the single word: ok' }] });
+      return { ok: true, message: `Connected to ${preset.label}.` };
+    } catch (err) {
+      return { ok: false, message: describeError(err) };
+    }
+  },
+  onFetchModels: async (preset) => {
+    const models = await fetchModels(preset);
+    return models.map((m) => (typeof m === 'string' ? m : m.id)).filter(Boolean);
+  },
+});
+document.body.appendChild(settings.element);
+
+const askAi = buildAskAi({
+  onSubmit: (question) => sendToAi(question),
+  onClose: () => askAiPopover.close(),
+  onOpenSettings: () => {
+    askAiPopover.close();
+    refreshSettings();
+    settings.open(settingsAnchor());
+  },
+});
+const askAiPopover = createPopover({ className: 'pop-ai', label: 'Ask AI' });
+askAiPopover.el.appendChild(askAi.el);
+
+let aiState = { ready: false, busy: false, answer: '', error: '' };
+
+function activePreset() {
+  const id = getActivePresetId();
+  if (!id) return null;
+  return getPreset(id) || null;
+}
+
+function refreshSettings() {
+  settings.update({
+    presets: loadPresets(),
+    activeId: getActivePresetId(),
+    kinds: AI_KINDS,
+  });
+}
+
+function syncAi() {
+  const preset = activePreset();
+  const ready = Boolean(preset && preset.apiKey) || Boolean(preset && preset.auth === 'none');
+  aiState = {
+    ...aiState,
+    ready,
+    providerLabel: preset ? preset.label : 'No provider',
+    canSendImage: preset ? preset.vision !== false : false,
+    hasSelection: selected.length > 0,
+  };
+  askAi.update(aiState);
+}
+
+// The page (or the selection) as an image, for a provider that can read
+// images. The selection is cropped to its bounds, so the AI sees the ink the
+// user actually highlighted.
+async function pageImageForAi() {
+  const page = workspace.page;
+  if (!page) return null;
+  const bounds = selected.length > 0 ? boundsOf(selected) : null;
+  const dataUrl = await pageRegionToDataUrl(page, { bounds, scale: 1 });
+  return { dataUrl, mimeType: 'image/png' };
+}
+
+async function sendToAi(question) {
+  const preset = activePreset();
+  if (!preset) {
+    syncAi();
+    askAi.update({ ...aiState, error: 'Choose a provider first.' });
+    return;
+  }
+  syncAi();
+  askAi.update({ ...aiState, busy: true, error: '', answer: '' });
+  try {
+    const messages = [{ role: 'user', content: question }];
+    let image = null;
+    if (preset.vision !== false) {
+      try {
+        image = await pageImageForAi();
+      } catch (err) {
+        // A page with no ink renders to a blank image; that is fine.
+        image = null;
+      }
+    }
+    const res = await callProvider(preset, { messages, image, model: preset.model });
+    aiState = { ...aiState, busy: false, answer: res.text || '', error: '' };
+  } catch (err) {
+    console.warn('[inkpad] AI request failed', err);
+    aiState = { ...aiState, busy: false, answer: '', error: describeError(err) };
+  }
+  syncAi();
+}
+
 // --- library screen --------------------------------------------------------
 const library = buildLibrary(libraryEl, {
   onNewNote: () => {
@@ -881,7 +1024,8 @@ const library = buildLibrary(libraryEl, {
     });
   },
   onSettings: () => {
-    toast('Settings come next.');
+    refreshSettings();
+    settings.open(settingsAnchor());
   },
   onTemplate: () => {
     toast('Templates come next.');
@@ -1027,6 +1171,9 @@ async function boot() {
 }
 
 boot();
+
+refreshSettings();
+syncAi();
 
 registerServiceWorker({
   onUpdate: () => toast('A new version is ready — reopen Inkpad to update.', 6000),

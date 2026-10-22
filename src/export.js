@@ -264,6 +264,26 @@ export async function pageToPngBlob(page, { scale = DEFAULT_SCALE, background = 
   }
 }
 
+// A PNG of part of the page, as a data URL. This is how a selection (or the
+// whole page) is sent to an AI provider that can read images.
+export async function pageRegionToDataUrl(page, { bounds = null, scale = 1, background = '#ffffff' } = {}) {
+  const blob = await pageToPngBlob(page, { scale, background, bounds });
+  return blobToDataUrl(blob);
+}
+
+function blobToDataUrl(blob) {
+  return new Promise((resolve, reject) => {
+    if (typeof FileReader === 'undefined') {
+      reject(new Error('[inkpad] this browser cannot read a blob as a data URL.'));
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(blob);
+  });
+}
+
 // --- downloads --------------------------------------------------------------
 
 // A filename-safe version of a title: spaces become dashes and the

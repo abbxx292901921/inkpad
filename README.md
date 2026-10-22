@@ -7,7 +7,7 @@ no backend, no dependencies, no tracking.
 > Status: the Notability-style editor UI is in — floating icon toolbar,
 > expandable tool island, colour card, stroke card, shapes, lasso + transform
 > box, ruler. Notes persist in IndexedDB, the library screen works, PDFs and
-> images import, and the app runs offline.
+> images import, the app runs offline, and there is an "Ask AI" panel.
 > iPad input core done: synchronous drawing, palm rejection, squeeze-to-erase,
 > Pencil hover ring.
 
@@ -60,6 +60,12 @@ under a subpath like `/inkpad/`.
   folders, search, recent notes with thumbnails.
 - The more menu has: clear page, add a blank page, reset the view,
   print / save as PDF, download as PNG, the ruler, and the input settings.
+- **Ask AI**: the sparkle button in the right pill. Set up a provider first
+  (the library screen's gear, or "Add a provider" in the panel). The current
+  page — or your selection, cropped to it — is sent as an image, so the model
+  can read your handwriting. The choice is yours: Inkpad never switches
+  provider on its own and never retries.
+- **Print / Save as PDF** and **Download as PNG** are in the more menu.
 - Two-finger pinch zooms and pans; ctrl+wheel does the same on a trackpad.
 - The Pencil needs no pairing. The moment any Pencil event is seen, fingers
   stop drawing so you can rest your hand on the screen; tap the
