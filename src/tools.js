@@ -115,6 +115,13 @@ registerTool('select', {
   options: {},
 });
 
+registerTool('text', {
+  name: 'Text',
+  kind: 'text',
+  icon: 'text',
+  options: { color: '#1b1b1b', size: 28 },
+});
+
 registerTool('eraser', {
   name: 'Eraser',
   kind: 'eraser',

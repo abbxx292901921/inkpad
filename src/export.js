@@ -34,12 +34,14 @@
 
 import { isTranslucent, renderStroke } from './strokes.js';
 import { isShapeStroke, renderShape } from './shapes.js';
+import { isTextObject, renderText } from './text.js';
 import { containFit } from './pages.js';
 
 // Shapes are strokes, but they are drawn as a hard-edged path: the ink
 // renderer's midpoint smoothing would round a rectangle's corners.
 function drawStroke(ctx, stroke) {
-  if (isShapeStroke(stroke)) renderShape(ctx, stroke);
+  if (isTextObject(stroke)) renderText(ctx, stroke);
+  else if (isShapeStroke(stroke)) renderShape(ctx, stroke);
   else renderStroke(ctx, stroke);
 }
 

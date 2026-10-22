@@ -1,0 +1,90 @@
+/* ui/text-input.css — the floating text input.
+   theme.css is owned by another agent, so these styles live here and
+   ui/text-input.js links the file in at runtime (no build step).
+   The field is transparent and borderless: the text must look like it is
+   being written straight onto the page. */
+
+.txi {
+  position: fixed;
+  inset: 0;
+  /* Above the toolbar and the debug overlay, below the toast. */
+  z-index: 15;
+  /* The layer itself never takes a click: only the field and the Done
+     button do, so a stroke can still start anywhere else on the page. */
+  pointer-events: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.txi[hidden] {
+  display: none;
+}
+
+/* --- the field ------------------------------------------------------------- */
+
+.txi-box {
+  position: absolute;
+  min-width: 240px;
+  max-width: min(520px, 78vw);
+  pointer-events: none;
+}
+
+.txi-field {
+  display: block;
+  width: 100%;
+  margin: 0;
+  padding: 2px 4px;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--ink, #1b1b1b);
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  /* 16px is the iOS floor: a focused field smaller than that makes Safari
+     zoom the page. ui/text-input.js raises the size when it is smaller. */
+  font-size: 16px;
+  /* Matches the line height the canvas renderer uses. */
+  line-height: 1.2;
+  resize: none;
+  /* A long text scrolls inside the field instead of growing over the page. */
+  max-height: 30vh;
+  overflow-y: auto;
+  pointer-events: auto;
+  touch-action: manipulation;
+  caret-color: currentColor;
+}
+
+.txi-hint {
+  margin-top: 4px;
+  padding-left: 4px;
+  font-size: 12px;
+  line-height: 1.2;
+  color: var(--muted, #8e8e93);
+  pointer-events: none;
+}
+
+/* --- the Done button ------------------------------------------------------- */
+
+.txi-done {
+  margin-top: 6px;
+  padding: 7px 16px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--accent, #0a84ff);
+  color: #ffffff;
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 1.2;
+  cursor: pointer;
+  pointer-events: auto;
+  touch-action: manipulation;
+}
+
+.txi-done:active {
+  filter: brightness(0.9);
+}
+
+.txi-done:focus-visible {
+  outline: 2px solid var(--accent, #0a84ff);
+  outline-offset: 2px;
+}

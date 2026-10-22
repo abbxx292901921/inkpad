@@ -49,11 +49,14 @@ import { getCurrentTool } from './tools.js';
 import { defaultInput } from './input.js';
 import { containFit } from './pages.js';
 import { isShapeStroke, renderShape, createShapeStroke } from './shapes.js';
+import { isTextObject, renderText } from './text.js';
 
 // Shapes are strokes, but they are drawn as a hard-edged path: the ink
 // renderer's midpoint smoothing would round a rectangle's corners.
+// Text objects are not strokes at all — they are their own thing.
 function drawStroke(ctx, stroke) {
-  if (isShapeStroke(stroke)) renderShape(ctx, stroke);
+  if (isTextObject(stroke)) renderText(ctx, stroke);
+  else if (isShapeStroke(stroke)) renderShape(ctx, stroke);
   else renderStroke(ctx, stroke);
 }
 
@@ -390,6 +393,7 @@ export function createDrawingSurface(canvas, viewport, hooks) {
     const erasing = tool.kind === 'eraser' || isPenEraseGesture(e);
     const selecting = tool.kind === 'select' && !erasing;
     const shaping = tool.kind === 'shape' && !erasing;
+    const typing = tool.kind === 'text' && !erasing;
 
     // A shape or a lasso gesture collects a path instead of ink.
     const shapeDraft = shaping
@@ -404,7 +408,7 @@ export function createDrawingSurface(canvas, viewport, hooks) {
       : null;
 
     const entry = {
-      stroke: erasing || selecting || shaping
+      stroke: erasing || selecting || shaping || typing
         ? null
         : createStroke({
             tool: tool.id,
@@ -417,6 +421,7 @@ export function createDrawingSurface(canvas, viewport, hooks) {
           }),
       erasing,
       selecting,
+      typing,
       shape: shapeDraft,
       path: [],
       renderedPieces: 0,
@@ -429,7 +434,7 @@ export function createDrawingSurface(canvas, viewport, hooks) {
     entry.coalescedTotal += list.length;
     for (const ce of list) {
       const pt = toPagePoint(ce);
-      if (erasing || selecting) entry.path.push({ x: pt.x, y: pt.y });
+      if (erasing || selecting || typing) entry.path.push({ x: pt.x, y: pt.y });
       else if (shaping) {
         entry.shape.x0 = pt.x;
         entry.shape.y0 = pt.y;
@@ -437,13 +442,21 @@ export function createDrawingSurface(canvas, viewport, hooks) {
         entry.shape.y1 = pt.y;
       } else addPoint(entry.stroke, pt.x, pt.y, pt.pressure);
     }
-    if (!erasing && !selecting && !shaping) {
+    if (!erasing && !selecting && !shaping && !typing) {
       applyTransform(ctx, viewport);
       paintNewPieces(ctx, entry.stroke, entry);
     }
     reportDebug(
       e,
-      erasing ? 'down(erase)' : selecting ? 'down(select)' : shaping ? 'down(shape)' : 'down',
+      erasing
+        ? 'down(erase)'
+        : selecting
+          ? 'down(select)'
+          : shaping
+            ? 'down(shape)'
+            : typing
+              ? 'down(text)'
+              : 'down',
       list.length,
     );
   }
@@ -501,7 +514,7 @@ export function createDrawingSurface(canvas, viewport, hooks) {
     entry.coalescedTotal += list.length;
     for (const ce of list) {
       const pt = toPagePoint(ce);
-      if (entry.erasing || entry.selecting) entry.path.push({ x: pt.x, y: pt.y });
+      if (entry.erasing || entry.selecting || entry.typing) entry.path.push({ x: pt.x, y: pt.y });
       else if (entry.shape) {
         entry.shape.x1 = pt.x;
         entry.shape.y1 = pt.y;
@@ -541,7 +554,7 @@ export function createDrawingSurface(canvas, viewport, hooks) {
         ctx.stroke();
         ctx.restore();
       }
-    } else if (!entry.erasing) {
+    } else if (!entry.erasing && !entry.typing) {
       applyTransform(ctx, viewport);
       paintNewPieces(ctx, entry.stroke, entry);
     }
@@ -589,6 +602,12 @@ export function createDrawingSurface(canvas, viewport, hooks) {
     if (entry.selecting) {
       reportDebug(e, `${kind} (lasso, ${entry.path.length} pts)`, 0);
       if (hooks.onLasso) hooks.onLasso(entry.path);
+      return;
+    }
+    if (entry.typing) {
+      // A tap with the text tool places the caret. A drag is not a text.
+      const first = entry.path[0];
+      if (first && hooks.onTextTap) hooks.onTextTap({ x: first.x, y: first.y });
       return;
     }
     if (entry.shape) {

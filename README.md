@@ -48,6 +48,10 @@ under a subpath like `/inkpad/`.
 - **Shapes**: tap the shape button for the picker — line, rectangle, ellipse,
   triangle, arrow — plus the Freeform/Boxed fill mode. Hold **Shift** while
   dragging to disable the 45°/square snapping.
+- **Text**: tap the T button, then tap where you want the text. A caret
+  appears; type and press Done. The text is a real object on the page, so you
+  can select it and drag it around. The stroke slider sets the font size
+  when the text tool is active.
 - **Select**: tap the select button and draw a lasso around your ink. A blue
   dashed box with corner handles and a rotation handle appears; drag the
   handles to scale or rotate, drag the box to move, and Cmd/Ctrl+A to select

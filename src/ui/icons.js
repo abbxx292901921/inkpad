@@ -84,6 +84,8 @@ export const ICONS = {
       P('M7.4 16.6 L4.9 19.1'),
     ],
   },
+  // A capital T: the text tool.
+  text: { paths: [P('M5 6 L19 6'), P('M12 6 L12 19')] },
   // A four-pointed star, like the app's own mark: the "Ask AI" button.
   sparkle: {
     paths: [P('M12 2.5 L13.9 9.1 L20.5 11 L13.9 12.9 L12 19.5 L10.1 12.9 L3.5 11 L10.1 9.1 Z')],

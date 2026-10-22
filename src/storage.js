@@ -205,7 +205,7 @@ export function toLayerRecord(layer) {
 // A stroke as it goes into the database: plain JSON, copied field by field so
 // nothing DOM-shaped can sneak in.
 export function toStrokeRecord(stroke) {
-  return {
+  const record = {
     id: stroke.id,
     tool: stroke.tool,
     color: stroke.color,
@@ -221,6 +221,21 @@ export function toStrokeRecord(stroke) {
       t: p.t,
     })),
   };
+  // A text object carries its string and its size; a shape carries its kind
+  // and fill mode. Without these they would load back as blank ink.
+  if (stroke.kind === 'text') {
+    record.kind = 'text';
+    record.text = stroke.text ?? '';
+    record.size = stroke.size ?? 28;
+    record.x = stroke.x ?? stroke.points?.[0]?.x ?? 0;
+    record.y = stroke.y ?? stroke.points?.[0]?.y ?? 0;
+  }
+  if (stroke.kind === 'shape') {
+    record.kind = 'shape';
+    record.shape = stroke.shape;
+    record.fill = stroke.fill === true;
+  }
+  return record;
 }
 
 // A note as it goes into the database: one structured-cloneable record.

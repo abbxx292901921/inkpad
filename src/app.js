@@ -42,6 +42,8 @@ import { createWorkspace } from './workspace.js';
 import { downloadNoteAsPng, printNote, pageRegionToDataUrl } from './export.js';
 import { registerServiceWorker } from './sw-register.js';
 import { buildAskAi } from './ui/ask-ai.js';
+import { buildTextInput } from './ui/text-input.js';
+import { createText, isTextObject, syncTextAnchor } from './text.js';
 import { buildSettings } from './ui/settings.js';
 import {
   loadPresets,
@@ -191,6 +193,16 @@ const surface = createDrawingSurface(canvas, viewport, {
     selected = strokesInPolygon(page.strokes, path);
     syncSelection();
   },
+  onTextTap: ({ x, y }) => {
+    pendingTextAt = { x, y };
+    const s = pageToScreen(x, y, viewport);
+    const rect = canvas.getBoundingClientRect();
+    const tool = getCurrentTool();
+    textInput.openAt(rect.left + s.x, rect.top + s.y, {
+      color: tool.options.color,
+      size: Math.max(16, (tool.options.size ?? 28) * viewport.zoom),
+    });
+  },
   debug: (text) => {
     debugEl.textContent = text;
   },
@@ -235,6 +247,7 @@ const strokePanel = buildStrokePanel({
   onSelectWidth: (v) => {
     const tool = getCurrentTool();
     if (tool.kind === 'eraser') setToolOptions('eraser', { radius: v });
+    else if (tool.kind === 'text') setToolOptions('text', { size: v });
     else setToolOptions(tool.id, { width: v });
     syncUI();
   },
@@ -564,6 +577,7 @@ const toolbar = buildToolbar(toolbarEl, {
     { id: 'pencil', label: 'Pencil', icon: 'pencil' },
     { id: 'shape', label: 'Shapes', icon: 'shapeRect' },
     { id: 'select', label: 'Select', icon: 'select' },
+    { id: 'text', label: 'Text', icon: 'text' },
     { id: 'eraser', label: 'Eraser', icon: 'eraser' },
   ],
   quickColors: QUICK_COLORS,
@@ -683,6 +697,13 @@ function beginTransform() {
   }, 500);
 }
 
+// A text object's anchor lives in points[0]; keep x/y in step with it.
+function syncTextAnchors() {
+  for (const s of selected) {
+    if (isTextObject(s)) syncTextAnchor(s);
+  }
+}
+
 const selection = buildSelection({
   getViewport: () => viewport,
   getCanvasRect: () => canvas.getBoundingClientRect(),
@@ -691,6 +712,7 @@ const selection = buildSelection({
     if (selected.length === 0) return;
     beginTransform();
     translateStrokes(selected, dx / viewport.zoom, dy / viewport.zoom);
+    syncTextAnchors();
     surface.redraw();
     syncSelection();
   },
@@ -721,6 +743,7 @@ const selection = buildSelection({
       l: { x: b.maxX, y: (b.minY + b.maxY) / 2 },
     }[handle];
     scaleStrokes(selected, anchor.x, anchor.y, sx, sy);
+    syncTextAnchors();
     surface.redraw();
     syncSelection();
   },
@@ -739,6 +762,7 @@ const selection = buildSelection({
     const a1 = Math.atan2(y - c.y, x - c.x);
     if (rotateLast !== null) {
       rotateStrokes(selected, cx, cy, a1 - rotateLast);
+      syncTextAnchors();
       surface.redraw();
       syncSelection();
     }
@@ -987,6 +1011,46 @@ async function sendToAi(question) {
   syncAi();
 }
 
+// --- text tool -------------------------------------------------------------
+// Tap with the text tool and a caret appears where you tapped. The typed
+// text becomes a real object on the page, so it can be selected, moved,
+// saved and exported like any other ink.
+let pendingTextAt = null;
+
+const textInput = buildTextInput({
+  onCommit: (text) => {
+    const page = workspace.page;
+    const at = pendingTextAt;
+    pendingTextAt = null;
+    if (!page || !at || !text) {
+      setCurrentTool('pen');
+      syncUI();
+      return;
+    }
+    const tool = getCurrentTool();
+    const obj = createText({
+      x: at.x,
+      y: at.y,
+      text,
+      size: tool.options.size ?? 28,
+      color: tool.options.color,
+    });
+    history.commit(addEntry(obj, page.strokes.length));
+    page.strokes.push(obj);
+    workspace.markDirty();
+    surface.redraw();
+    syncUI();
+    setCurrentTool('pen');
+    syncUI();
+  },
+  onCancel: () => {
+    pendingTextAt = null;
+    setCurrentTool('pen');
+    syncUI();
+  },
+});
+document.body.appendChild(textInput.element);
+
 // --- library screen --------------------------------------------------------
 const library = buildLibrary(libraryEl, {
   onNewNote: () => {
@@ -1046,6 +1110,8 @@ function strokeValue() {
   const tool = getCurrentTool();
   if (tool.kind === 'eraser') return tool.options.radius;
   if (tool.kind === 'select') return 3;
+  // The text tool's slider is the FONT SIZE, not a stroke width.
+  if (tool.kind === 'text') return tool.options.size ?? 28;
   return tool.options.width;
 }
 
@@ -1053,6 +1119,7 @@ function strokeRange() {
   const tool = getCurrentTool();
   if (tool.kind === 'eraser') return { min: 4, max: 40 };
   if (tool.kind === 'select') return { min: 1, max: 20 };
+  if (tool.kind === 'text') return { min: 10, max: 96 };
   return getWidthRange(tool.id);
 }
 
@@ -1079,7 +1146,7 @@ function syncUI() {
     fingerDrawing: fingerDrawingEnabled(),
     pageIndex: workspace.pageIndex,
     pageCount: workspace.pages.length,
-    showColors: tool.kind === 'ink' || tool.kind === 'shape',
+    showColors: tool.kind === 'ink' || tool.kind === 'shape' || tool.kind === 'text',
     showWidths: tool.kind !== 'select',
   });
   syncStrokePanel();

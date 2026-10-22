@@ -50,10 +50,48 @@ function boxOfPoints(points) {
 // Returns null for an empty set (no strokes, or strokes without points).
 export function boundsOf(strokes) {
   const pts = [];
+  let textBox = null;
   for (const s of strokes ?? []) {
+    // A text object is a box, not a polyline: use its measured size.
+    if (s && s.kind === 'text') {
+      const b = textBoxOf(s);
+      if (b) {
+        textBox = textBox
+          ? {
+              minX: Math.min(textBox.minX, b.minX),
+              minY: Math.min(textBox.minY, b.minY),
+              maxX: Math.max(textBox.maxX, b.maxX),
+              maxY: Math.max(textBox.maxY, b.maxY),
+            }
+          : b;
+      }
+      continue;
+    }
     for (const p of s?.points ?? []) pts.push(p);
   }
-  return boxOfPoints(pts);
+  const box = boxOfPoints(pts);
+  if (!textBox) return box;
+  if (!box) return textBox;
+  return {
+    minX: Math.min(box.minX, textBox.minX),
+    minY: Math.min(box.minY, textBox.minY),
+    maxX: Math.max(box.maxX, textBox.maxX),
+    maxY: Math.max(box.maxY, textBox.maxY),
+  };
+}
+
+// The box of a text object, in page units.
+function textBoxOf(s) {
+  const anchor = s.points?.[0] ?? { x: s.x, y: s.y };
+  const w = s.measured?.width ?? s.size ?? 0;
+  const h = s.measured?.height ?? s.size ?? 0;
+  if (!Number.isFinite(anchor?.x)) return null;
+  return {
+    minX: anchor.x,
+    minY: anchor.y,
+    maxX: anchor.x + w,
+    maxY: anchor.y + h,
+  };
 }
 
 // --- transforms -------------------------------------------------------------

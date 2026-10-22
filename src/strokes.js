@@ -407,6 +407,15 @@ function distToSegmentSq(px, py, ax, ay, bx, by) {
 export function strokeHitTest(stroke, x, y, radius) {
   const pts = stroke.points;
   if (pts.length === 0) return false;
+  // A text object is a box, not a polyline: hit the whole box, not just its
+  // anchor point.
+  if (stroke.kind === 'text') {
+    const anchor = pts[0];
+    const w = stroke.measured?.width ?? stroke.size ?? 0;
+    const h = stroke.measured?.height ?? stroke.size ?? 0;
+    return x >= anchor.x - radius && x <= anchor.x + w + radius
+      && y >= anchor.y - radius && y <= anchor.y + h + radius;
+  }
   const r2 = radius * radius;
   // Cheap bbox reject, padded by radius + half line width.
   const pad = radius + stroke.width / 2;

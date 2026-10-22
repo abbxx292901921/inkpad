@@ -222,7 +222,7 @@ ok(getToolOptions('pencil').pressureTaper === false, 'pencil has a constant widt
 ok(getToolOptions('eraser').radius === 14, 'eraser radius default');
 setToolOptions('pen', { color: '#ff0000' });
 ok(getToolOptions('pen').color === '#ff0000', 'setToolOptions patches pen colour');
-ok(getTools().length === 6, 'six tools registered');
+ok(getTools().length === 7, 'seven tools registered');
 ok(getTools().every((t) => t.name && t.icon), 'every tool has a name and an icon');
 ok(getWidthRange('pen').max === 20, 'pen width range');
 ok(getWidthRange('marker').min === 6, 'marker width range');
@@ -237,6 +237,8 @@ ok(getToolOptions('shape').fill === 'freeform', 'shape tool default fill mode');
 ok(getToolOptions('shape').pressureTaper === false, 'shape has a constant width');
 ok(getTool('select').kind === 'select', 'select tool is a select tool');
 ok(getTool('shape').kind === 'shape', 'shape tool is a shape tool');
+ok(getTool('text').kind === 'text', 'text tool is a text tool');
+ok(getToolOptions('text').size === 28, 'text tool default size');
 ok(QUICK_COLORS.length === 6, 'quick colour row has six swatches');
 let threw = false;
 try { setCurrentTool('nope'); } catch { threw = true; }

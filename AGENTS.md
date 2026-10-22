@@ -49,6 +49,9 @@ Regenerate the service worker's precache list after adding a file:
 - `src/shapes.js` — shape geometry. A shape IS a stroke (its points are the
   vertices), so undo, persistence, export and hit-testing work on it for free.
 - `src/transform.js` — bounds, move/scale/rotate maths for the selection.
+- `src/text.js` — text objects. A text object is a stroke-like object with
+  `kind: 'text'`: it lives in the page's object list, so undo, the lasso,
+  persistence and PNG export all work on it for free.
 - `src/tools.js` — tool registry: pen, marker, pencil, shape, select, eraser.
   Per-tool options (`{ color, width, opacity, lineStyle, pressureTaper }` for
   ink, `{ shape, fill }` for shapes, `{ radius }` for the eraser).
@@ -68,7 +71,8 @@ Regenerate the service worker's precache list after adding a file:
   `shape-menu.js` (the shape picker), `selection.js` (the transform box),
   `library.js` (the notes screen), `ruler.js` + `rotation-dial.js`,
   `settings.js` (the AI providers sheet), `ask-ai.js` (the Ask AI panel),
-  `prompt.js` (text and list prompts).
+  `text-input.js` (the on-canvas text field), `prompt.js` (text and list
+  prompts).
   UI-only CSS lives beside its module and is injected at runtime — there is no
   bundler to bundle it.
 - `src/ai/` — the AI layer: `providers.js`, `client.js`, `presets.js`,
@@ -306,12 +310,10 @@ Rules:
 ## Known issues
 - (phase C) The library's "Record a lecture", "Find a template" and Gallery
   are placeholders. The bell and the "Daily Brain Break" card are decoration.
-- (phase C) Audio recording, templates and a text tool are not built.
+- (phase C) Audio recording and templates are not built.
 - (phase C) Folders can be created, renamed and deleted, but notes can only
   be moved to a folder from the more menu — not by dragging them in the
   library.
-- (phase C) The eraser treats a shape's points as an open polyline, so the
-  closing edge of a rectangle is not erasable.
 - (phase C) No keyboard shortcut for the tools yet (undo/redo are bound to
   Ctrl/Cmd+Z and Ctrl/Cmd+Shift+Z).
 - (phase C) OpenAI and Anthropic cannot be called from a browser at all
