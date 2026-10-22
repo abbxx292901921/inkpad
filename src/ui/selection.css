@@ -109,3 +109,53 @@
   outline: 2px solid #0a84ff;
   outline-offset: 4px;
 }
+
+/* --- the action row -------------------------------------------------------- */
+
+.sel-actions {
+  position: absolute;
+  display: flex;
+  gap: 6px;
+  transform: translate(-50%, -100%);
+  pointer-events: auto;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.sel-actions.is-below {
+  transform: translate(-50%, 0);
+}
+
+.sel-action {
+  height: 30px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 10px;
+  border: 1px solid rgba(10, 132, 255, 0.35);
+  border-radius: 8px;
+  background: #ffffff;
+  color: #0a84ff;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.22);
+  cursor: pointer;
+  touch-action: none;
+}
+
+.sel-action .ico {
+  flex: none;
+}
+
+.sel-action-danger {
+  border-color: rgba(255, 59, 48, 0.35);
+  color: #ff3b30;
+}
+
+.sel-action:focus-visible {
+  outline: 2px solid #0a84ff;
+  outline-offset: 2px;
+}

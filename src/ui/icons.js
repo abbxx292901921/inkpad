@@ -56,6 +56,13 @@ export const ICONS = {
       P('M8 20 L4 20 L4 16'),
     ],
   },
+  // A dashed freeform loop: the lasso selection gesture.
+  lasso: {
+    paths: [
+      P('M12 4.5 C17 3.8 20.8 7.3 20.3 12.2 C19.8 17.2 15.4 20.4 10.2 19.4 C5.5 18.5 3.2 14.2 5.1 9.6 C6.3 6.7 9 4.6 12 4.5 Z'),
+    ],
+    dash: '3 2.5',
+  },
   // Circle with a plus: "add element".
   add: {
     paths: [

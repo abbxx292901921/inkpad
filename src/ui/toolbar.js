@@ -54,7 +54,7 @@ export function buildToolbar(root, actions) {
       onClick: () => actions.onSelectTool(t.id),
     });
     b.dataset.tool = t.id;
-    b.appendChild(icon(t.icon));
+    b.appendChild(icon(t.id === 'select' ? 'lasso' : t.icon));
     rowTools.appendChild(b);
     toolBtns.set(t.id, b);
   }

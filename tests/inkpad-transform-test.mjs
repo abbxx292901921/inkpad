@@ -17,6 +17,7 @@ const {
   hitHandle,
   pointInPolygon,
   strokesInPolygon,
+  strokesInRect,
 } = mod;
 
 let checks = 0;
@@ -180,6 +181,54 @@ const sliced = makeStroke([[-5, 5], [15, 5]], { id: 'sliced' });
 const caught2 = strokesInPolygon([sliced], square);
 check(caught2.includes(sliced), 'strokesInPolygon catches a sliced stroke');
 check(strokesInPolygon([inside], []).length === 0, 'strokesInPolygon with a degenerate polygon');
+
+// --- strokesInRect ----------------------------------------------------------
+
+const inRectStroke = makeStroke([[12, 12], [18, 18]], { id: 'in-rect' });
+const outRectStroke = makeStroke([[100, 100], [110, 110]], { id: 'out-rect' });
+const rectBox = { x: 10, y: 10, w: 20, h: 20 };
+
+const inRect = strokesInRect([inRectStroke, outRectStroke], rectBox);
+check(inRect.length === 1, `strokesInRect catches one stroke (got ${inRect.length})`);
+check(inRect[0] === inRectStroke, 'strokesInRect catches the ink inside the rectangle');
+check(!inRect.includes(outRectStroke), 'strokesInRect leaves the outside ink alone');
+
+// A shape is a stroke whose points are its vertices.
+const rectShape = makeStroke([[30, 30], [70, 30], [70, 70], [30, 70]], { id: 'rect-shape', tool: 'shape' });
+check(
+  strokesInRect([rectShape], { x: 60, y: 60, w: 20, h: 20 }).includes(rectShape),
+  'strokesInRect catches a shape from its vertex bounds',
+);
+
+// A text object counts via its box, not just its anchor point.
+const textObj = {
+  id: 'text-rect',
+  kind: 'text',
+  points: [{ x: 100, y: 100, pressure: 0.5, t: 0 }],
+  w: 80,
+  h: 40,
+};
+check(
+  strokesInRect([textObj], { x: 120, y: 110, w: 10, h: 10 }).includes(textObj),
+  'strokesInRect catches a text object by its box',
+);
+check(
+  strokesInRect([textObj], { x: 90, y: 90, w: 5, h: 5 }).length === 0,
+  'strokesInRect does not catch a text object from outside its box',
+);
+
+// Touching an edge counts.
+const edgeStroke = makeStroke([[20, 20]], { id: 'edge' });
+check(
+  strokesInRect([edgeStroke], { x: 0, y: 0, w: 20, h: 20 }).includes(edgeStroke),
+  'strokesInRect counts an edge-touch',
+);
+
+// An empty box catches nothing.
+check(strokesInRect([inRectStroke], { x: 200, y: 200, w: 50, h: 50 }).length === 0, 'strokesInRect: empty region');
+check(strokesInRect([inRectStroke], { x: 0, y: 0, w: 0, h: 0 }).length === 0, 'strokesInRect: zero-size box');
+check(strokesInRect([], rectBox).length === 0, 'strokesInRect: no strokes');
+check(strokesInRect([inRectStroke], null).length === 0, 'strokesInRect: no box');
 
 // --- done -------------------------------------------------------------------
 

@@ -14,6 +14,8 @@ import {
   addEntry,
   deleteEntry,
   removeStrokesById,
+  insertStrokesAt,
+  cloneStroke,
   eraseHitIds,
 } from './strokes.js';
 import {
@@ -61,6 +63,7 @@ import { callProvider, describeError } from './ai/client.js';
 import { fetchModels } from './ai/models.js';
 import { describeKind, PROVIDER_KINDS } from './ai/providers.js';
 import { buildShapeMenu } from './ui/shape-menu.js';
+import { buildSelectMenu } from './ui/select-menu.js';
 import { buildTextPrompt, buildListPrompt } from './ui/prompt.js';
 import { buildSelection } from './ui/selection.js';
 import { buildRuler } from './ui/ruler.js';
@@ -72,6 +75,7 @@ import {
   rotateStrokes,
   handlePositions,
   strokesInPolygon,
+  strokesInRect,
 } from './transform.js';
 import { snapshotStrokes, restoreStrokes, transformEntry } from './strokes.js';
 import {
@@ -336,15 +340,7 @@ const surface = createDrawingSurface(
       const page = workspace.pages[pageIndex] ?? workspace.page;
       if (!page) return;
       activatePage(pageIndex);
-      // A marquee selects whatever it touches. Tested as a polygon so the
-      // hit rule matches the freeform lasso exactly.
-      const poly = [
-        { x: box.x, y: box.y },
-        { x: box.x + box.w, y: box.y },
-        { x: box.x + box.w, y: box.y + box.h },
-        { x: box.x, y: box.y + box.h },
-      ];
-      selected = strokesInPolygon(page.strokes, poly);
+      selected = strokesInRect(page.strokes, box);
       syncSelection();
     },
     onTextBox: ({ x, y, w, h }, pageIndex) => {
@@ -777,6 +773,14 @@ const toolbar = buildToolbar(toolbarEl, {
       openShapeMenu(toolbarEl.querySelector('[data-tool="shape"]') || toolbarEl);
       return;
     }
+    if (id === 'select') {
+      // Tapping the select button selects the tool AND opens the lasso /
+      // boxed picker, so the gesture mode is always one tap away.
+      setCurrentTool('select');
+      syncUI();
+      openSelectMenu(toolbarEl.querySelector('[data-tool="select"]') || toolbarEl);
+      return;
+    }
     if (id !== 'select') clearSelection();
     setCurrentTool(id);
     syncUI();
@@ -1084,6 +1088,8 @@ const selection = buildSelection({
     selected = [...page.strokes];
     syncSelection();
   },
+  onDuplicateSelection: () => duplicateSelection(),
+  onDeleteSelection: () => deleteSelection(),
 });
 document.body.appendChild(selection.element);
 
@@ -1117,6 +1123,75 @@ function clearSelection() {
   if (selected.length === 0) return;
   selected = [];
   syncSelection();
+}
+
+// --- selection (B2) --------------------------------------------------------
+// Boxed select, the lasso / boxed picker, and the selection actions.
+
+const selectMenu = buildSelectMenu({
+  onSelectMode: (mode) => {
+    setToolOptions('select', { mode });
+    syncUI();
+  },
+});
+
+if (selectMenu.element) document.body.appendChild(selectMenu.element);
+
+function openSelectMenu(anchor) {
+  const mode = getToolOptions('select')?.mode ?? 'freeform';
+  selectMenu.update({ mode });
+  for (const p of ALL_POPOVERS) p.close();
+  selectMenu.open(anchor);
+}
+
+// Duplicate every selected stroke, offset by 24 page units, with the copy
+// inserted directly after its original. ONE history entry covers the batch.
+function duplicateSelection() {
+  const page = workspace.page;
+  if (!page || selected.length === 0) return;
+  const originals = selected
+    .map((stroke) => ({ stroke, index: page.strokes.indexOf(stroke) }))
+    .filter((entry) => entry.index >= 0)
+    .sort((a, b) => a.index - b.index);
+  if (originals.length === 0) return;
+
+  const placed = [];
+  let offset = 0;
+  for (const { stroke, index } of originals) {
+    const clone = cloneStroke(stroke);
+    translateStrokes([clone], 24, 24);
+    if (isTextObject(clone)) syncTextAnchor(clone);
+    placed.push({ stroke: clone, index: index + offset + 1 });
+    offset += 1;
+  }
+
+  insertStrokesAt(page.strokes, placed);
+  const ids = placed.map((entry) => entry.stroke.id);
+  history.commit(
+    onPage(page, {
+      undo: (strokes) => removeStrokesById(strokes, ids),
+      redo: (strokes) => insertStrokesAt(strokes, placed),
+    }),
+  );
+  selected = placed.map((entry) => entry.stroke);
+  workspace.markDirty();
+  surface.redraw();
+  syncSelection();
+  syncUI();
+}
+
+// Delete the selected strokes under one history entry.
+function deleteSelection() {
+  const page = workspace.page;
+  if (!page || selected.length === 0) return;
+  const removed = removeStrokesById(page.strokes, selected.map((stroke) => stroke.id));
+  if (removed.length === 0) return;
+  history.commit(onPage(page, deleteEntry(removed)));
+  selected = [];
+  workspace.markDirty();
+  surface.redraw();
+  syncSelection();
+  syncUI();
 }
 
 // --- the shape menu --------------------------------------------------------

@@ -1,0 +1,68 @@
+/* select-menu.css — the selection mode card.
+
+   theme.css is owned by another agent, so the card styles ship here and are
+   linked in at runtime by src/ui/select-menu.js (same pattern as
+   src/ui/shape-menu.css). The tokens come from theme.css, with literal
+   fallbacks so the card still looks right if it is opened on its own. */
+
+.select-menu {
+  position: fixed;
+  z-index: 30;
+  padding: 10px;
+  background: #fff;
+  border-radius: 14px;
+  box-shadow: 0 10px 34px rgba(0, 0, 0, 0.2);
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.select-menu[hidden] {
+  display: none;
+}
+
+/* --- freeform / boxed ------------------------------------------------------ */
+
+.select-menu-seg {
+  display: flex;
+  gap: 6px;
+}
+
+.select-seg {
+  flex: 1 1 0;
+  min-width: 0;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 10px;
+  border: 1px solid var(--hairline, #e5e5ea);
+  border-radius: 10px;
+  background: #fff;
+  color: var(--chrome, #4a4a4a);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.select-seg .ico {
+  flex: none;
+}
+
+/* The selected segment gets the blue border and the pale blue fill, exactly
+   like the Notability screenshot. */
+.select-seg.is-active,
+.select-seg[aria-pressed="true"] {
+  color: var(--accent, #0a84ff);
+  border-color: var(--accent, #0a84ff);
+  background: var(--accent-soft, #e8f2ff);
+}
+
+.select-seg:focus-visible {
+  outline: 2px solid var(--accent, #0a84ff);
+  outline-offset: 1px;
+}

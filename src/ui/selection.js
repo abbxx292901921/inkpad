@@ -26,6 +26,7 @@
 
 import { pageToScreen } from '../coord.js';
 import { handlePositions, HANDLE_NAMES } from '../transform.js';
+import { icon } from './icons.js';
 import { el } from './popover.js';
 
 const HANDLE_LABELS = {
@@ -125,6 +126,8 @@ export function buildSelection({
   onRotate,
   onSelectAll,
   onDeselect,
+  onDuplicateSelection,
+  onDeleteSelection,
   // The viewport (zoom + pan) used to place the box. The app owns it.
   getViewport = () => ({ zoom: 1, panX: 0, panY: 0 }),
   // Where the canvas sits in the viewport. pageToScreen() returns canvas
@@ -169,6 +172,29 @@ export function buildSelection({
   rot.appendChild(el('div', 'sel-rot-dot'));
   dragify(rot, (payload) => onRotate?.(payload), busy);
   overlay.appendChild(rot);
+
+  // The action row sits above the box: small white pills that match the blue
+  // accent of the handles.
+  const actionRow = el('div', 'sel-actions');
+  const duplicateBtn = el('button', 'sel-action');
+  duplicateBtn.type = 'button';
+  duplicateBtn.title = 'Duplicate';
+  duplicateBtn.setAttribute('aria-label', 'Duplicate selection');
+  duplicateBtn.appendChild(icon('pages', { size: 14 }));
+  duplicateBtn.appendChild(el('span', 'sel-action-label', 'Duplicate'));
+  duplicateBtn.addEventListener('click', () => onDuplicateSelection?.());
+
+  const deleteBtn = el('button', 'sel-action sel-action-danger');
+  deleteBtn.type = 'button';
+  deleteBtn.title = 'Delete';
+  deleteBtn.setAttribute('aria-label', 'Delete selection');
+  deleteBtn.appendChild(icon('trash', { size: 14 }));
+  deleteBtn.appendChild(el('span', 'sel-action-label', 'Delete'));
+  deleteBtn.addEventListener('click', () => onDeleteSelection?.());
+
+  actionRow.appendChild(duplicateBtn);
+  actionRow.appendChild(deleteBtn);
+  overlay.appendChild(actionRow);
 
   // Dragging the interior of the box moves the selection.
   dragify(box, (payload) => onMove?.(payload), busy);
@@ -226,6 +252,13 @@ export function buildSelection({
     } else {
       rot.style.display = 'none';
     }
+
+    // The action row hangs above the box, or below it when the box is too
+    // close to the top of the screen.
+    const above = tl.y + oy > 48;
+    actionRow.style.left = `${(tl.x + br.x) / 2 + ox}px`;
+    actionRow.style.top = `${(above ? tl.y : br.y) + oy + (above ? -8 : 8)}px`;
+    actionRow.classList.toggle('is-below', !above);
 
     overlay.hidden = false;
   }

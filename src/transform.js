@@ -208,6 +208,53 @@ function strokeBox(stroke) {
   return boxOfPoints(stroke?.points ?? []);
 }
 
+// The bounds of one stroke in page units: a text object is its BOX, while ink
+// and shapes are the bounds of their points (a shape's points are vertices).
+function strokeBounds(stroke) {
+  if (stroke && stroke.kind === 'text') return textBoxOf(stroke);
+  return strokeBox(stroke);
+}
+
+function rectBounds(box) {
+  if (!box) return null;
+  if (Number.isFinite(box.x) && Number.isFinite(box.y)) {
+    const w = Number.isFinite(box.w) ? box.w : 0;
+    const h = Number.isFinite(box.h) ? box.h : 0;
+    return {
+      minX: Math.min(box.x, box.x + w),
+      minY: Math.min(box.y, box.y + h),
+      maxX: Math.max(box.x, box.x + w),
+      maxY: Math.max(box.y, box.y + h),
+    };
+  }
+  if (
+    Number.isFinite(box.minX) &&
+    Number.isFinite(box.minY) &&
+    Number.isFinite(box.maxX) &&
+    Number.isFinite(box.maxY)
+  ) {
+    return { minX: box.minX, minY: box.minY, maxX: box.maxX, maxY: box.maxY };
+  }
+  return null;
+}
+
+// The strokes a dragged rectangle catches. The rectangle is in PAGE units as
+// { x, y, w, h }; touching an edge counts, so a marquee that just clips a
+// stroke still selects it.
+export function strokesInRect(strokes, box) {
+  const rect = rectBounds(box);
+  if (!rect) return [];
+  const caught = [];
+  for (const s of Array.isArray(strokes) ? strokes : []) {
+    const b = strokeBounds(s);
+    if (!b) continue;
+    if (b.maxX < rect.minX || b.minX > rect.maxX) continue;
+    if (b.maxY < rect.minY || b.minY > rect.maxY) continue;
+    caught.push(s);
+  }
+  return caught;
+}
+
 function cross(ax, ay, bx, by, cx, cy) {
   return (bx - ax) * (cy - ay) - (by - ay) * (cx - ax);
 }
