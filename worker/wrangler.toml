@@ -1,0 +1,24 @@
+# wrangler.toml — the deploy config for the Inkpad AI proxy.
+#
+# Deploy (from this directory):
+#   npx wrangler login                      # once; opens a browser to approve
+#   npx wrangler deploy                     # creates the worker + the vars
+#   npx wrangler secret put NVIDIA_NIM_KEY  # paste the nvapi-... key (stdin)
+#   npx wrangler secret put PROXY_SECRET    # paste any passphrase (stdin)
+#
+# SECRETS ARE NOT HERE: the key lives in the NVIDIA_NIM_KEY secret binding,
+# named by `keyEnv` in PROVIDERS, so this file stays committable.
+# `wrangler secret put` needs the worker to exist, so deploy FIRST.
+
+name = "inkpad-proxy"
+main = "inkpad-proxy.js"
+compatibility_date = "2024-11-01"
+
+# The provider that serves a request which names none.
+[vars]
+DEFAULT_PROVIDER = "nvidia-nim"
+
+# The provider map. The key is NOT here: `keyEnv` names a secret binding.
+# To add another provider, add another entry to this JSON (e.g. an
+# "openai": {"base": "https://api.openai.com/v1", "keyEnv": "OPENAI_KEY"}).
+PROVIDERS = "{\"nvidia-nim\": {\"base\": \"https://integrate.api.nvidia.com/v1\", \"keyEnv\": \"NVIDIA_NIM_KEY\", \"auth\": \"bearer\", \"models\": \"https://integrate.api.nvidia.com/v1/models\"}}"

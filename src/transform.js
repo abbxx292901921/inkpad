@@ -117,6 +117,20 @@ export function scaleStrokes(strokes, originX, originY, sx, sy) {
   const fy = Number.isFinite(sy) ? sy : 1;
   const factor = Math.sqrt(Math.abs(fx) * Math.abs(fy));
   for (const s of strokes ?? []) {
+    // A text object is a BOX, not a polyline: its anchor point moves, its box
+    // and its font size scale, and the wrap memo is invalidated.
+    if (s && s.kind === 'text') {
+      const p = s.points && s.points[0];
+      if (p) {
+        p.x = originX + (p.x - originX) * fx;
+        p.y = originY + (p.y - originY) * fy;
+      }
+      s.w = (Number.isFinite(s.w) ? s.w : 0) * Math.abs(fx);
+      s.h = (Number.isFinite(s.h) ? s.h : 0) * Math.abs(fy);
+      s.size = Math.max(1, (Number.isFinite(s.size) ? s.size : 28) * factor);
+      s.measured = null;
+      continue;
+    }
     for (const p of s?.points ?? []) {
       p.x = originX + (p.x - originX) * fx;
       p.y = originY + (p.y - originY) * fy;

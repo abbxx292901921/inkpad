@@ -136,6 +136,34 @@ export function createWorkspace({ onChange } = {}) {
     notify();
   }
 
+  // Rename a note the library names, which may not be the open one. The
+  // stored note is loaded, renamed and written back whole, so a rename
+  // survives even when the note is never opened.
+  async function renameNoteById(noteId, title) {
+    if (ws.current && ws.current.id === noteId) {
+      await renameNote(title);
+      return;
+    }
+    if (!ws.persistent) {
+      const local = ws.notes.find((n) => n.id === noteId);
+      if (local) local.title = title;
+      notify();
+      return;
+    }
+    try {
+      const note = await storage.loadNote(noteId);
+      if (note) {
+        note.title = title;
+        note.updatedAt = Date.now();
+        await storage.saveNote(note);
+        ws.notes = await storage.listNotes();
+      }
+    } catch (err) {
+      ws.lastError = err;
+    }
+    notify();
+  }
+
   // --- saving --------------------------------------------------------------
 
   function markDirty() {
@@ -389,10 +417,26 @@ export function createWorkspace({ onChange } = {}) {
   }
 
   async function moveToFolder(noteId, folderId) {
-    const note = ws.notes.find((n) => n.id === noteId);
-    if (note) note.folderId = folderId;
-    if (ws.current && ws.current.id === noteId) ws.current.folderId = folderId;
-    await save();
+    if (ws.current && ws.current.id === noteId) {
+      ws.current.folderId = folderId;
+      await save();
+    } else if (ws.persistent) {
+      // The note is not open, so its STORED record is the truth: patch and
+      // write it back, or the move evaporates on the next listNotes().
+      try {
+        const note = await storage.loadNote(noteId);
+        if (note) {
+          note.folderId = folderId;
+          await storage.saveNote(note);
+          ws.notes = await storage.listNotes();
+        }
+      } catch (err) {
+        ws.lastError = err;
+      }
+    } else {
+      const local = ws.notes.find((n) => n.id === noteId);
+      if (local) local.folderId = folderId;
+    }
     notify();
   }
 
@@ -438,6 +482,7 @@ export function createWorkspace({ onChange } = {}) {
     openNote,
     deleteNote,
     renameNote,
+    renameNoteById,
     markDirty,
     scheduleSave,
     save,

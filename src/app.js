@@ -73,6 +73,7 @@ import { fetchModels } from './ai/models.js';
 import { describeKind, PROVIDER_KINDS } from './ai/providers.js';
 import { buildShapeMenu } from './ui/shape-menu.js';
 import { buildSelectMenu } from './ui/select-menu.js';
+import { buildToolMenu, sizePresets } from './ui/tool-menu.js';
 import { buildPagesPanel } from './ui/pages-panel.js';
 import { buildTextPrompt, buildListPrompt } from './ui/prompt.js';
 import { buildSelection } from './ui/selection.js';
@@ -243,12 +244,26 @@ function centeredPageIndex() {
 // --- screens ---------------------------------------------------------------
 let screen = 'editor';
 
+// The library's own view state (section, search, folder). Kept here so a
+// workspace change can refresh the list the user is looking at, not reset it.
+const libraryView = { screen: 'home', query: '', folderId: null };
+
+function updateLibraryView(patch = {}) {
+  if (patch.query !== undefined) libraryView.query = patch.query;
+  if (patch.folderId !== undefined) libraryView.folderId = patch.folderId;
+  if (patch.screen !== undefined) {
+    libraryView.screen = patch.screen;
+    if (patch.screen !== 'folder') libraryView.folderId = null;
+  }
+  library.update(workspace.libraryState(libraryView));
+}
+
 function showScreen(name) {
   screen = name;
   if (editorEl) editorEl.hidden = name !== 'editor';
   if (libraryEl) libraryEl.hidden = name !== 'library';
   if (name === 'library') {
-    library.update(workspace.libraryState({ screen: 'home' }));
+    updateLibraryView();
   } else {
     surface.resize();
   }
@@ -383,8 +398,11 @@ const surface = createDrawingSurface(
 const palettePopover = createPopover({ className: 'pop-palette', label: 'Colours' });
 const strokePopover = createPopover({ className: 'pop-stroke', label: 'Stroke options' });
 const morePopover = createPopover({ className: 'pop-menu', label: 'More options' });
+// The library's per-note menu (rename / move / delete), anchored to the
+// row's "..." button rather than the toolbar.
+const noteMorePopover = createPopover({ className: 'pop-menu', label: 'Note options' });
 
-const ALL_POPOVERS = [palettePopover, strokePopover, morePopover];
+const ALL_POPOVERS = [palettePopover, strokePopover, morePopover, noteMorePopover];
 
 function openOnly(popover) {
   for (const p of ALL_POPOVERS) {
@@ -657,31 +675,47 @@ function placeLayer(layer, view) {
 }
 
 async function importFile(file) {
-  if (!workspace.current) {
+  // An import is ALWAYS a fresh note: the file's pages/layers are never
+  // merged into whatever note happens to be open. The user can still add to
+  // a note by importing while it is open — but they get a NEW note to do it,
+  // which is reversible (delete it) instead of surprising (ink moved).
+  try {
     workspace.newNote();
+    showScreen('editor');
     fitPage();
-  }
-  if (file.type === 'application/pdf' || /\.pdf$/i.test(file.name)) {
-    await importPdfFile(file);
-    return;
-  }
-  if (!file.type.startsWith('image/')) {
-    toast(`Cannot import "${file.name}" yet — images and PDFs are the targets.`);
-    return;
-  }
-  const url = URL.createObjectURL(file);
-  const layer = createImageLayer({ blob: file, url, name: file.name });
-  const view = visiblePageRect();
-  layer.onLoad = (l) => {
-    placeLayer(l, view);
-    surface.redraw();
-  };
-  addLayer(workspace.page, layer);
-  workspace.markDirty();
-  if (workspace.current.title === 'Untitled') {
+    if (file.type === 'application/pdf' || /\.pdf$/i.test(file.name)) {
+      await importPdfFile(file);
+      return;
+    }
+    if (!file.type.startsWith('image/')) {
+      toast(`Cannot import "${file.name}" yet — images and PDFs are the targets.`);
+      return;
+    }
+    const url = URL.createObjectURL(file);
+    const layer = createImageLayer({ blob: file, url, name: file.name });
+    // A fresh note's page 0 has just been fitted, so the visible rect IS
+    // the sheet: the image is contain-fitted onto page 1 of the new note.
+    const view = visiblePageRect();
+    layer.onLoad = (l) => {
+      if (l.failed) {
+        // A file the browser could not decode (a broken download, an
+        // unsupported format) must not sit invisible on the page.
+        removeLayer(workspace.page, l.id);
+        surface.redraw();
+        toast(`Could not read "${file.name}" — is it a valid image?`);
+        return;
+      }
+      placeLayer(l, view);
+      surface.redraw();
+    };
+    addLayer(workspace.page, layer);
+    workspace.markDirty();
     workspace.renameNote(file.name.replace(/\.[^.]+$/, ''));
+    toast(`Imported ${file.name} — write on top of it.`);
+  } catch (err) {
+    console.warn('[inkpad] import failed', err);
+    toast(err && err.message ? err.message : `"${file.name}" could not be imported.`);
   }
-  toast(`Imported ${file.name} — write on top of it.`);
 }
 
 async function importPdfFile(file) {
@@ -782,6 +816,12 @@ const toolbar = buildToolbar(toolbarEl, {
       openSelectMenu(toolbarEl.querySelector('[data-tool="select"]') || toolbarEl);
       return;
     }
+    // Tapping the tool that is already active opens ITS presets (colours +
+    // thicknesses, or eraser sizes) instead of doing nothing.
+    if (id in TOOL_MENU_LABELS && getCurrentTool().id === id) {
+      toggleToolMenu(toolbarEl.querySelector(`[data-tool="${id}"]`) || toolbarEl);
+      return;
+    }
     if (id !== 'select') clearSelection();
     setCurrentTool(id);
     syncUI();
@@ -837,6 +877,7 @@ const toolbar = buildToolbar(toolbarEl, {
     // stacks on top of the answer.
     for (const p of ALL_POPOVERS) p.close();
     pagesPanel.close();
+    toolMenu.close();
     syncAi();
     askAiPopover.open(anchor);
     askAi.focus();
@@ -1035,6 +1076,7 @@ function togglePagesPanel() {
   askAiPopover.close();
   selectMenu.close();
   shapeMenu.close();
+  toolMenu.close();
   syncPagesPanel();
   pagesPanel.open();
 }
@@ -1106,8 +1148,19 @@ const selection = buildSelection({
     // pointer, -1 means the left/top edge does.
     const DX = { tl: -1, l: -1, bl: -1, t: 0, b: 0, r: 1, tr: 1, br: 1 };
     const DY = { tl: -1, t: -1, tr: -1, l: 0, r: 0, bl: 1, b: 1, br: 1 };
-    const sx = w > 0 ? (w + DX[handle] * ux) / w : 1;
-    const sy = h > 0 ? (h + DY[handle] * uy) / h : 1;
+    // A moving edge can be dragged right up to the edge it closes on, but
+    // never PAST it. Past it the scale factor crosses zero, the bounds invert
+    // and the factor explodes (w+ux)/w — mirrored points thrown thousands of
+    // page units out, and a selection box so large the compositor gives up
+    // (the whole screen goes black on an iPad). A floor of 8 page units keeps
+    // the gesture monotonic: the box shrinks to a dot and stops.
+    const MIN_BOX = 8;
+    const sx = DX[handle] !== 0 && w > 0
+      ? Math.max(w + DX[handle] * ux, MIN_BOX) / w
+      : 1;
+    const sy = DY[handle] !== 0 && h > 0
+      ? Math.max(h + DY[handle] * uy, MIN_BOX) / h
+      : 1;
     // The opposite corner/edge stays put.
     const anchor = {
       tl: { x: b.maxX, y: b.maxY },
@@ -1212,7 +1265,57 @@ function openSelectMenu(anchor) {
   const mode = getToolOptions('select')?.mode ?? 'freeform';
   selectMenu.update({ mode });
   for (const p of ALL_POPOVERS) p.close();
+  toolMenu.close();
   selectMenu.open(anchor);
+}
+
+// --- the per-tool quick menu ------------------------------------------------
+// Tapping the tool that is already active opens that tool's own presets:
+// colour dots and thickness dots for the ink tools, sizes for the eraser.
+// The palette and the stroke panel stay for the full control; this is the
+// one-tap path Notability puts behind every tool button.
+
+const TOOL_MENU_LABELS = { pen: 'Pen', marker: 'Marker', pencil: 'Pencil', eraser: 'Eraser' };
+
+const toolMenu = buildToolMenu({
+  onPickColor: (hex) => {
+    setToolOptions(getCurrentTool().id, { color: hex });
+    syncUI();
+  },
+  onPickSize: (value) => {
+    const tool = getCurrentTool();
+    // The eraser's value is its RADIUS; the ink tools' is the stroke width.
+    if (tool.kind === 'eraser') setToolOptions('eraser', { radius: value });
+    else setToolOptions(tool.id, { width: value });
+    syncUI();
+  },
+});
+
+function syncToolMenu() {
+  const tool = getCurrentTool();
+  if (!(tool.id in TOOL_MENU_LABELS)) return;
+  const range = strokeRange();
+  toolMenu.update({
+    label: TOOL_MENU_LABELS[tool.id],
+    color: colorForTool(),
+    colors: tool.kind === 'eraser' ? [] : QUICK_COLORS,
+    size: strokeValue(),
+    sizes: sizePresets(range.min, range.max),
+    min: range.min,
+    max: range.max,
+  });
+}
+
+function toggleToolMenu(anchor) {
+  if (toolMenu.isOpen()) {
+    toolMenu.close();
+    return;
+  }
+  for (const p of ALL_POPOVERS) p.close();
+  selectMenu.close();
+  shapeMenu.close();
+  syncToolMenu();
+  toolMenu.open(anchor);
 }
 
 // Duplicate every selected stroke, offset by 24 page units, with the copy
@@ -1287,6 +1390,8 @@ function openShapeMenu(anchor) {
     mode: tool.options.mode ?? 'boxed',
   });
   for (const p of ALL_POPOVERS) p.close();
+  toolMenu.close();
+  selectMenu.close();
   shapeMenu.open(anchor);
 }
 
@@ -1295,7 +1400,7 @@ function openShapeMenu(anchor) {
 const textPromptPopover = createPopover({ className: 'pop-prompt', label: 'Prompt' });
 const listPromptPopover = createPopover({ className: 'pop-prompt', label: 'Choose' });
 
-function openTextPrompt({ title, value = '', placeholder = '', onSubmit }) {
+function openTextPrompt({ title, value = '', placeholder = '', onSubmit, anchor = null }) {
   const prompt = buildTextPrompt({
     title,
     value,
@@ -1309,11 +1414,17 @@ function openTextPrompt({ title, value = '', placeholder = '', onSubmit }) {
   textPromptPopover.el.textContent = '';
   textPromptPopover.el.appendChild(prompt.el);
   for (const p of ALL_POPOVERS) p.close();
-  textPromptPopover.open(toolbarEl.querySelector('.pill-right') || toolbarEl);
+  // The library has no toolbar pill, so its prompts anchor to whatever opened
+  // them (a note row); the editor keeps the right pill.
+  textPromptPopover.open(anchor || toolbarEl.querySelector('.pill-right') || toolbarEl);
   prompt.focus();
 }
 
-function openFolderPicker() {
+function openFolderPicker(noteId, anchor = null) {
+  // The library passes the note its row names; the editor passes nothing and
+  // means the note that is open.
+  const targetId = noteId ?? workspace.current?.id;
+  if (!targetId) return;
   const items = [
     { id: null, label: 'No folder' },
     ...workspace.folders.map((f) => ({ id: f.id, label: f.name, color: f.color })),
@@ -1324,17 +1435,15 @@ function openFolderPicker() {
     emptyText: 'No folders yet.',
     onSelect: async (item) => {
       listPromptPopover.close();
-      if (workspace.current) {
-        await workspace.moveToFolder(workspace.current.id, item.id);
-        toast(item.id ? `Moved to "${item.label}".` : 'Removed from its folder.');
-      }
+      await workspace.moveToFolder(targetId, item.id);
+      toast(item.id ? `Moved to "${item.label}".` : 'Removed from its folder.');
     },
     onCancel: () => listPromptPopover.close(),
   });
   listPromptPopover.el.textContent = '';
   listPromptPopover.el.appendChild(list.el);
   for (const p of ALL_POPOVERS) p.close();
-  listPromptPopover.open(toolbarEl.querySelector('.pill-right') || toolbarEl);
+  listPromptPopover.open(anchor || toolbarEl.querySelector('.pill-right') || toolbarEl);
 }
 
 // --- AI (B4) -----------------------------------------------------------------
@@ -1869,17 +1978,18 @@ const library = buildLibrary(libraryEl, {
     syncUI();
   },
   onImportFile: () => {
-    if (!workspace.current) workspace.newNote();
+    // importFile() makes the fresh note itself; the library stays untouched
+    // until the import succeeds and the editor opens with the new note.
     fileInput.click();
   },
   onSearch: (q) => {
-    library.update(workspace.libraryState({ screen: 'home', query: q }));
+    updateLibraryView({ query: q });
   },
   onSelectFolder: (id) => {
-    library.update(workspace.libraryState({ screen: 'folder', folderId: id }));
+    updateLibraryView({ screen: 'folder', folderId: id });
   },
   onSelectScreen: (name) => {
-    library.update(workspace.libraryState({ screen: name }));
+    updateLibraryView({ screen: name });
   },  onNewFolder: () => {
     openTextPrompt({
       title: 'Folder name',
@@ -1905,6 +2015,49 @@ const library = buildLibrary(libraryEl, {
   },
   onMore: () => {
     toast('Nothing else here yet.');
+  },
+  onNoteMore: (note, anchor) => {
+    // The per-note menu. Deleting a whole note is irreversible (there is no
+    // trash), so it asks for a typed DELETE, like the editor's own delete.
+    for (const p of ALL_POPOVERS) p.close();
+    noteMorePopover.el.textContent = '';
+    noteMorePopover.el.appendChild(el('div', 'menu-head', note.title || 'Untitled'));
+    noteMorePopover.el.appendChild(menuRow('Rename note', null, () => {
+      noteMorePopover.close();
+      openTextPrompt({
+        title: 'Rename note',
+        value: note.title || '',
+        placeholder: 'Note name',
+        anchor,
+        onSubmit: async (text) => {
+          const name = text.trim();
+          if (!name) return;
+          await workspace.renameNoteById(note.id, name);
+          toast('Renamed.');
+        },
+      });
+    }));
+    noteMorePopover.el.appendChild(menuRow('Move to a folder', null, () => {
+      noteMorePopover.close();
+      openFolderPicker(note.id, anchor);
+    }));
+    noteMorePopover.el.appendChild(menuRow('Delete note', null, () => {
+      noteMorePopover.close();
+      openTextPrompt({
+        title: 'Delete this note?',
+        placeholder: 'Type DELETE to confirm',
+        anchor,
+        onSubmit: async (text) => {
+          if (text.toUpperCase() !== 'DELETE') {
+            toast('Not deleted - type DELETE to confirm.');
+            return;
+          }
+          await workspace.deleteNote(note.id);
+          toast('Note deleted.');
+        },
+      });
+    }, { danger: true }));
+    noteMorePopover.open(anchor);
   },
 });
 
@@ -1939,6 +2092,9 @@ function syncStrokePanel() {
 }
 
 function syncUI() {
+  // A workspace change (save, rename, delete, move) re-renders the library
+  // the user is looking at, so the list never goes stale mid-screen.
+  if (screen === 'library') updateLibraryView();
   const tool = getCurrentTool();
   toolbar.update({
     tool: tool.id,
@@ -1960,6 +2116,8 @@ function syncUI() {
   if (palettePopover.isOpen()) {
     palette.update({ color: colorForTool(), palettes, paletteIndex });
   }
+  // The quick menu follows a colour/thickness change made elsewhere too.
+  if (toolMenu.isOpen()) syncToolMenu();
   canvas.style.cursor =
     tool.id === 'eraser' ? 'pointer' : tool.id === 'select' ? 'default' : 'crosshair';
 }

@@ -298,4 +298,15 @@ ok(threw === true, 'unknown tool throws');
   ok(wide.w === 100 && wide.h === 50, 'containFit fits a landscape source');
 }
 
+// --- the per-tool quick menu (pure helpers only) -------------------------
+{
+  const { sizePresets } = await import('../src/ui/tool-menu.js');
+  const pen = sizePresets(1, 20);
+  ok(pen.length === 5, 'a range yields five thickness presets');
+  ok(pen[0] === 1 && pen[pen.length - 1] === 20, 'the presets span the range');
+  ok(pen.every((v, i) => i === 0 || v > pen[i - 1]), 'the presets ascend');
+  const eraser = sizePresets(4, 40);
+  ok(eraser[0] === 4 && eraser[eraser.length - 1] === 40, 'the eraser presets span its range');
+}
+
 console.log(`\nALL ${n} CHECKS PASSED`);

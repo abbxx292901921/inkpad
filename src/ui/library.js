@@ -501,6 +501,20 @@ export function buildLibrary(root, actions = {}) {
     b.appendChild(el('span', 'lib-row-date', formatDate(note.updatedAt)));
     b.addEventListener('click', () => actions.onOpenNote?.(note.id));
     li.appendChild(b);
+    // The per-note menu (rename / move / delete) hangs off the row, not the
+    // open button, so a delete never needs the note to be opened first.
+    if (actions.onNoteMore) {
+      const more = el('button', 'lib-row-more');
+      more.type = 'button';
+      more.title = 'More';
+      more.setAttribute('aria-label', `More options for ${note.title || 'Untitled'}`);
+      more.appendChild(glyph('more', { size: 16 }));
+      more.addEventListener('click', (e) => {
+        e.stopPropagation();
+        actions.onNoteMore(note, more);
+      });
+      li.appendChild(more);
+    }
     return li;
   }
 

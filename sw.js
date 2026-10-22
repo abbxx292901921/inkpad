@@ -18,7 +18,7 @@
 
 // Bump CACHE_NAME on every deploy: it is what tells the browser that the
 // old precache is stale and has to be rebuilt.
-const CACHE_NAME = 'inkpad-v4';
+const CACHE_NAME = 'inkpad-v5';
 const CACHE_PREFIX = 'inkpad-';
 const PRECACHE_BATCH = 6;
 
@@ -33,9 +33,9 @@ const PRECACHE_PATHS = [
 'src/ui/rotation-dial.js', 'src/ui/ruler.css', 'src/ui/ruler.js', 'src/ui/select-menu.css', 'src/ui/select-menu.js', 'src/ui/selection.css',
 'src/ui/selection.js', 'src/ui/settings.css', 'src/ui/settings.js', 'src/ui/shape-editor.css', 'src/ui/shape-editor.js',
 'src/ui/shape-menu.css', 'src/ui/shape-menu.js', 'src/ui/stroke-panel.js', 'src/ui/text-bar.css', 'src/ui/text-bar.js',
-'src/ui/text-input.css', 'src/ui/text-input.js', 'src/ui/toolbar.js', 'src/workspace.js', 'theme.css', 'vendor/pdfjs/LICENSE',
-'vendor/pdfjs/cmaps/78-EUC-H.bcmap', 'vendor/pdfjs/cmaps/78-EUC-V.bcmap', 'vendor/pdfjs/cmaps/78-H.bcmap',
-'vendor/pdfjs/cmaps/78-RKSJ-H.bcmap', 'vendor/pdfjs/cmaps/78-RKSJ-V.bcmap', 'vendor/pdfjs/cmaps/78-V.bcmap',
+'src/ui/text-input.css', 'src/ui/text-input.js', 'src/ui/tool-menu.css', 'src/ui/tool-menu.js', 'src/ui/toolbar.js', 'src/workspace.js',
+'theme.css', 'vendor/pdfjs/LICENSE', 'vendor/pdfjs/cmaps/78-EUC-H.bcmap', 'vendor/pdfjs/cmaps/78-EUC-V.bcmap',
+'vendor/pdfjs/cmaps/78-H.bcmap', 'vendor/pdfjs/cmaps/78-RKSJ-H.bcmap', 'vendor/pdfjs/cmaps/78-RKSJ-V.bcmap', 'vendor/pdfjs/cmaps/78-V.bcmap',
 'vendor/pdfjs/cmaps/78ms-RKSJ-H.bcmap', 'vendor/pdfjs/cmaps/78ms-RKSJ-V.bcmap', 'vendor/pdfjs/cmaps/83pv-RKSJ-H.bcmap',
 'vendor/pdfjs/cmaps/90ms-RKSJ-H.bcmap', 'vendor/pdfjs/cmaps/90ms-RKSJ-V.bcmap', 'vendor/pdfjs/cmaps/90msp-RKSJ-H.bcmap',
 'vendor/pdfjs/cmaps/90msp-RKSJ-V.bcmap', 'vendor/pdfjs/cmaps/90pv-RKSJ-H.bcmap', 'vendor/pdfjs/cmaps/90pv-RKSJ-V.bcmap',

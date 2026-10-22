@@ -95,23 +95,26 @@ Regenerate the service worker's precache list after adding a file:
   `shape-editor.js` (the draggable vertex handles),
   `library.js` (the notes screen), `pages-panel.js` (the page sidebar:
   thumbnails, search, add/duplicate/delete/clear), `text-bar.js` (the rich
-  text formatting bar), `ruler.js` + `rotation-dial.js`,
+  text formatting bar), `tool-menu.js` (the per-tool quick menu: colour and
+  thickness presets behind a re-tap of the active pen/marker/pencil, or
+  sizes for the eraser), `ruler.js` + `rotation-dial.js`,
   `settings.js` (the AI providers sheet), `ask-ai.js` (the Ask AI panel),
   `text-input.js` (the on-canvas text field), `prompt.js` (text and list
   prompts).
   UI-only CSS lives beside its module and is injected at runtime — there is no
   bundler to bundle it.
 - `worker/inkpad-proxy.js` — a Cloudflare Worker that proxies AI API calls
-  so providers that block browser calls (OpenAI, Anthropic, NVIDIA NIM) can be
-  used. The key lives in the worker's bindings, never in the app. See
-  `worker/README.md`.
+  so providers that block browser calls (OpenAI, Anthropic, NVIDIA NIM) can
+  be used. The key lives in the worker's bindings, never in the app. See
+  `worker/README.md`; `worker/wrangler.toml` is the ready-to-deploy config
+  (the NVIDIA key is a `wrangler secret`, not a file).
 - `src/ai/` — the AI layer: `providers.js`, `client.js`, `presets.js`,
   `models.js`, `annotate.js`. See "AI providers" below.
 - `src/coord.js` — the ONLY screen<->page conversion. Nothing else touches zoom/pan/dpr.
 - `sw.js` — the service worker (classic script, at the repo root).
 - `tools/gen-precache.mjs` — regenerates the service worker's precache list.
 - `tests/` — the test suite. Plain Node scripts, no framework, no
-  dependencies: `node tests/run-all.mjs` runs all eighteen suites (1212 checks).
+  dependencies: `node tests/run-all.mjs` runs all eighteen suites (1216 checks).
   Every suite prints `ALL N CHECKS PASSED` and exits non-zero on the first
   failure, so they work in CI as-is.
 - `design/notability-ui-spec.md` — the Notability UI rebuild spec, transcribed
@@ -142,7 +145,11 @@ Regenerate the service worker's precache list after adding a file:
 - A selection owns a transform box (`ui/selection.js`) with move, scale and
   rotate handles plus a Duplicate / Delete action row. All transform maths
   are in `src/transform.js`; the box's `bounds` stay page-local so a
-  selection survives panning and zooming.
+  selection survives panning and zooming. A scale handle can never drag its
+  edge past the opposite edge: the new size is floored at 8 page units, so
+  the scale factor stays positive and the box can never invert (an inverted
+  box once exploded the bounds and blacked out the screen on an iPad).
+  Text objects scale their BOX and font size with the selection.
 - Text objects are stroked, selected and moved like ink because their box is
   their bounds (`strokeBounds()`). The rich formatting bar (`ui/text-bar.js`)
   is visible while the text tool is active OR text objects are selected, and
@@ -184,8 +191,12 @@ The editor is ONE scrollable document: pages stacked vertically on a table.
 ## File import
 - `<input id="file-input" type="file" accept="image/*,application/pdf">`,
   hidden, opened by the `+` button in the tool island.
-- Images become a layer of the ACTIVE page, contain-fitted into the visible
-  area of that sheet, so they pan and zoom with the ink.
+- **An import is ALWAYS a fresh note**: `importFile()` calls
+  `workspace.newNote()` first, opens the editor, and then lays the file in —
+  an image as a contain-fitted layer on page 1, a PDF as the note's pages.
+  Nothing is ever merged into the note that happens to be open. The note is
+  named from the file, and a decode failure (a broken/unsupported file)
+  removes the layer and toasts instead of sitting invisible on the page.
 - PDFs are rasterised page by page with the vendored pdf.js; each PDF page
   becomes a notebook page at the A4 width, keeping its own aspect ratio, with
   the raster as a full-sheet layer. pdf.js renders through a canvas CONTEXT
@@ -299,6 +310,21 @@ Per repaint, in order: clear both -> visible sheets (`drawPageSheet`) + layers
 per visible page on the paper canvas -> committed ink per visible page on the
 ink canvas (clipped to the sheet) -> in-progress strokes.
 `visiblePages()` culls, so a 200-page PDF costs only the pages on screen.
+
+**The two cheap repaint paths (do not regress).** A full repaint per frame is
+what made pinch-zoom and the select/shape previews feel heavy on an iPad, so
+`afterViewChange()` and the preview handlers use two shortcuts:
+- **The snapshot replay.** While pan/zoom input is still arriving (< 90ms
+  apart) the surface replays a bitmap of the last full paint (`drawImage` of
+  the captured canvases in doc space) instead of re-stroking every visible
+  stroke. A settle timer re-renders vector-crisp ~140ms after input stops.
+  `redraw()` (content changed) sets the snapshot invalid, so a stale bitmap
+  is never replayed after a commit, an undo or a resize.
+- **The region repaint.** The shape draft and the select marquee/lasso move
+  every pointermove; each move clears and re-renders only the UNION of the
+  previous and the new preview footprint (`repaintRegion()`), not the whole
+  sheet. A preview can therefore never leave a trail, and never costs a
+  full repaint either.
 
 `strokes.js` renders a stroke as a chain of quadratic PIECES (the
 "midpoint-forward" scheme) over the point list:
@@ -437,9 +463,9 @@ Rules:
 - (phase C) The library's "Record a lecture", "Find a template" and Gallery
   are placeholders. The bell and the "Daily Brain Break" card are decoration.
 - (phase C) Audio recording and templates are not built.
-- (phase C) Folders can be created, renamed and deleted, but notes can only
-  be moved to a folder from the more menu — not by dragging them in the
-  library.
+- (phase C) Folders can be created, renamed and deleted; a note can be moved
+  to a folder from its row menu (library) or the more menu (editor), but not
+  by dragging it in the library.
 - (phase C) No keyboard shortcut for the tools yet (undo/redo are bound to
   Ctrl/Cmd+Z and Ctrl/Cmd+Shift+Z).
 - (phase C) OpenAI, Anthropic and NVIDIA NIM cannot be called from a browser

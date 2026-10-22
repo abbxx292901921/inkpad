@@ -137,6 +137,8 @@ export function createDrawingSurface(canvas, viewport, hooks, options = {}) {
   const touches = new Map();
   // The active two-finger gesture baseline, or null.
   let pinch = null;
+// The last moment a pan/zoom input arrived; drives the snapshot replay window.
+let lastViewInput = -1e9;
   // The baseline of a ONE-finger pan: where the finger went down and where
   // the page was at that moment.
   let panBase = null;
@@ -163,7 +165,7 @@ export function createDrawingSurface(canvas, viewport, hooks, options = {}) {
 
   // Run `fn` with the context in the given PAGE's coordinate space, clipped
   // to the sheet. A null rect means legacy single-page mode (no translate,
-  // no clip) — exactly the old behaviour.
+  // no clip) - exactly the old behaviour.
   function withPage(rect, fn) {
     ctx.save();
     applyTransform(ctx, viewport);
@@ -175,6 +177,201 @@ export function createDrawingSurface(canvas, viewport, hooks, options = {}) {
     }
     fn(ctx);
     ctx.restore();
+  }
+
+  // --- cheap repaints during a gesture --------------------------------------
+  //
+  // WHY: a full repaint re-renders every committed stroke on every visible
+  // page. That is the right thing after an undo, a commit or a resize, but
+  // DURING a gesture it is waste: a shape or lasso preview moves a few
+  // points per pointermove, and a pinch or a wheel pan changes only the
+  // VIEW. Two helpers keep those paths cheap:
+  // - repaintRegion(): clear and re-render ONE page-local rectangle, so a
+  //   preview can move without either leaving a trail or paying for the
+  //   whole sheet.
+  // - paintFromSnapshot(): replay the last full paint as a bitmap while a
+  //   pan/zoom gesture is still moving - one drawImage instead of every
+  //   stroke on the page. The settle timer re-renders vector-crisp a beat
+  //   after the gesture stops.
+
+  // The page-local bbox of one object, padded by its own width. Text
+  // objects are their box; everything else is its points.
+  function strokeBBox(s) {
+    if (!s) return null;
+    if (isTextObject(s)) {
+      const w = s.w > 0 ? s.w : (s.measured?.width ?? 0);
+      const h = s.h > 0 ? s.h : (s.measured?.height ?? 0);
+      return { x: s.x, y: s.y, w: Math.max(w, 0), h: Math.max(h, 0) };
+    }
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    for (const p of s.points ?? []) {
+      if (p.x < minX) minX = p.x;
+      if (p.y < minY) minY = p.y;
+      if (p.x > maxX) maxX = p.x;
+      if (p.y > maxY) maxY = p.y;
+    }
+    if (minX === Infinity) return null;
+    const pad = (s.width ?? 0) / 2;
+    return { x: minX - pad, y: minY - pad, w: maxX - minX + pad * 2, h: maxY - minY + pad * 2 };
+  }
+
+  function unionBox(a, b) {
+    if (!a) return b;
+    if (!b) return a;
+    const x = Math.min(a.x, b.x);
+    const y = Math.min(a.y, b.y);
+    return {
+      x,
+      y,
+      w: Math.max(a.x + a.w, b.x + b.w) - x,
+      h: Math.max(a.y + a.h, b.y + b.h) - y,
+    };
+  }
+
+  function padBox(box, pad) {
+    if (!box || !(pad > 0)) return box;
+    return { x: box.x - pad, y: box.y - pad, w: box.w + pad * 2, h: box.h + pad * 2 };
+  }
+
+  function bboxOfPoints(points, pad = 0) {
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    for (const p of points ?? []) {
+      if (p.x < minX) minX = p.x;
+      if (p.y < minY) minY = p.y;
+      if (p.x > maxX) maxX = p.x;
+      if (p.y > maxY) maxY = p.y;
+    }
+    if (minX === Infinity) return null;
+    return padBox({ x: minX, y: minY, w: maxX - minX, h: maxY - minY }, pad);
+  }
+
+  // Clear one page-local rectangle of the ink canvas and re-render only the
+  // committed strokes that intersect it. This is what lets a preview move
+  // every pointermove without repainting the whole sheet.
+  function repaintRegion(page, pageRect, region) {
+    if (!page || !pageRect || !region || !(region.w > 0) || !(region.h > 0)) return false;
+    ctx.save();
+    applyTransform(ctx, viewport);
+    ctx.translate(pageRect.x, pageRect.y);
+    // Clearing is not clipped, but the overflow only ever touches the gap
+    // between pages, where there is no ink to lose.
+    ctx.clearRect(region.x, region.y, region.w, region.h);
+    ctx.beginPath();
+    ctx.rect(0, 0, pageRect.w, pageRect.h);
+    ctx.clip();
+    ctx.beginPath();
+    ctx.rect(region.x, region.y, region.w, region.h);
+    ctx.clip();
+    for (const s of page.strokes ?? []) {
+      const b = strokeBBox(s);
+      if (!b) continue;
+      if (b.x + b.w < region.x || b.x > region.x + region.w) continue;
+      if (b.y + b.h < region.y || b.y > region.y + region.h) continue;
+      drawStroke(ctx, s);
+    }
+    ctx.restore();
+    return true;
+  }
+
+  // The page object an entry is drawing on, for repaintRegion.
+  function entryPage(entry) {
+    const pages = pagesNow();
+    if (!pages || !entry || entry.pageIndex == null) return null;
+    return pages[entry.pageIndex] ?? null;
+  }
+
+  // The snapshot machinery. `zoom` doubles as the validity flag: any repaint
+  // that is not a full paint sets it to 0, so the next afterViewChange knows
+  // to do a real repaint before it can go back to replaying bitmaps.
+  // The scratch canvases are created lazily: the integration suite drives
+  // this module in Node, where there is no DOM to make one with.
+  const snap = {
+    paper: null,
+    ink: null,
+    zoom: 0,
+    panX: 0,
+    panY: 0,
+    dpr: 1,
+  };
+  let snapTimer = 0;
+
+  function snapCanvases() {
+    if (!snap.paper && typeof document !== 'undefined' && document.createElement) {
+      snap.paper = document.createElement('canvas');
+      snap.ink = document.createElement('canvas');
+    }
+    return snap.paper && snap.ink ? snap : null;
+  }
+
+  function captureSnapshot() {
+    const s = snapCanvases();
+    if (!s || !(canvas.width > 0) || !(canvas.height > 0)) {
+      snap.zoom = 0;
+      return;
+    }
+    if (snap.paper.width !== canvas.width) snap.paper.width = canvas.width;
+    if (snap.paper.height !== canvas.height) snap.paper.height = canvas.height;
+    if (snap.ink.width !== canvas.width) snap.ink.width = canvas.width;
+    if (snap.ink.height !== canvas.height) snap.ink.height = canvas.height;
+    const paperSnap = snap.paper.getContext('2d');
+    const inkSnap = snap.ink.getContext('2d');
+    if (paperCanvas && paperCtx) paperSnap.drawImage(paperCanvas, 0, 0);
+    else paperSnap.clearRect(0, 0, snap.paper.width, snap.paper.height);
+    inkSnap.clearRect(0, 0, snap.ink.width, snap.ink.height);
+    inkSnap.drawImage(canvas, 0, 0);
+    snap.zoom = viewport.zoom;
+    snap.panX = viewport.panX;
+    snap.panY = viewport.panY;
+    snap.dpr = viewport.dpr;
+  }
+
+  function paintFromSnapshot() {
+    clearDevicePixels();
+    // The snapshot is the DEVICE-pixel bitmap of what the canvas showed at
+    // capture time; drawn back in DOC space it lands exactly where its
+    // pixels came from, whatever the viewport does next.
+    const cssW = snap.ink.width / snap.dpr;
+    const cssH = snap.ink.height / snap.dpr;
+    const x0 = -snap.panX / snap.zoom;
+    const y0 = -snap.panY / snap.zoom;
+    const wDoc = cssW / snap.zoom;
+    const hDoc = cssH / snap.zoom;
+    if (paperCtx && paperCanvas) {
+      applyTransform(paperCtx, viewport);
+      paperCtx.drawImage(snap.paper, x0, y0, wDoc, hDoc);
+    }
+    applyTransform(ctx, viewport);
+    ctx.drawImage(snap.ink, x0, y0, wDoc, hDoc);
+  }
+
+  // Repaint the view after it moved. While input is still arriving (a pinch,
+  // a wheel run, a scrollbar drag) the snapshot replays; once it goes quiet
+  // for a beat the settle timer re-renders vector-crisp and re-captures.
+  function afterViewChange() {
+    clampView();
+    const now = performance.now();
+    const hot = snap.zoom > 0 && snap.ink != null && snap.ink.width === canvas.width
+      && snap.ink.height === canvas.height
+      && now - lastViewInput < 90;
+    if (hot) {
+      paintFromSnapshot();
+    } else {
+      repaintAll();
+      captureSnapshot();
+    }
+    lastViewInput = now;
+    clearTimeout(snapTimer);
+    snapTimer = setTimeout(() => {
+      repaintAll();
+      captureSnapshot();
+    }, 140);
+    if (hooks.onViewportChange) hooks.onViewportChange();
   }
 
   // Draw the page's background layers (imported PDF pages, photos of
@@ -298,6 +495,11 @@ export function createDrawingSurface(canvas, viewport, hooks, options = {}) {
   }
 
   function redraw() {
+    // Content changed under the snapshot (a commit, an undo, a text edit),
+    // so the bitmap is no longer the truth: the next view change must do a
+    // real repaint before snapshots become usable again.
+    snap.zoom = 0;
+    clearTimeout(snapTimer);
     repaintAll();
   }
 
@@ -315,14 +517,8 @@ export function createDrawingSurface(canvas, viewport, hooks, options = {}) {
     redraw();
   }
 
-  // The viewport moved: keep the document on the table, repaint, and let the
-  // app move the scrollbar and the page indicator.
-  function afterViewChange() {
-    clampView();
-    repaintAll();
-    if (hooks.onViewportChange) hooks.onViewportChange();
-  }
-
+  // Clamp the pan against the document, centring a document smaller than
+  // the screen. Returns true when the pan actually changed.
   function clampView() {
     const pages = pagesNow();
     if (!pages || pages.length === 0) return false;
@@ -772,23 +968,44 @@ export function createDrawingSurface(canvas, viewport, hooks, options = {}) {
       } else addPoint(entry.stroke, pt.x, pt.y, pt.pressure);
     }
     if (entry.shape) {
-      // Redraw the scene and lay the shape preview on top.
-      repaintAll();
+      // Redraw the scene and lay the shape preview on top. Only the union of
+      // the previous and the new preview footprint is repainted: a full
+      // repaint per pointermove is what made the shape tool feel heavy.
       const tool = getCurrentTool();
       const draft = buildShape(entry.shape, tool);
+      const pad = ((draft.width ?? 4) / 2) + 8 / viewport.zoom + 2;
+      const next = padBox(strokeBBox(draft), pad);
+      const dirty = unionBox(entry.previewDirty, next);
+      const page = entryPage(entry);
+      if (!(dirty && page && entry.rect && repaintRegion(page, entry.rect, dirty))) {
+        repaintAll();
+      }
       withPage(entry.rect, (c2) => renderShape(c2, draft));
+      entry.previewDirty = next;
     } else if (entry.selecting) {
-      // Clear the previous preview first: the marquee/lasso is drawn straight
-      // onto the ink canvas, so without a repaint every pointermove would
-      // leave its dashed rectangle behind (a trail of boxes).
-      repaintAll();
+      // The marquee/lasso preview is drawn straight onto the ink canvas, so
+      // its previous footprint has to be cleared - but only ITS footprint,
+      // not the whole sheet on every pointermove.
+      const pad = 8 / viewport.zoom + 4;
+      let next = null;
       if (entry.selectBox) {
-        // Boxed selection: draw the rectangle the user is dragging.
+        // Boxed selection: the rectangle the user is dragging.
         const p = entry.path[entry.path.length - 1];
         if (p) {
           entry.box.x1 = p.x;
           entry.box.y1 = p.y;
         }
+        const b = normalizedBox(entry.box);
+        if (b) next = padBox({ x: b.x, y: b.y, w: b.w, h: b.h }, pad);
+      } else {
+        next = bboxOfPoints(entry.path, pad);
+      }
+      const dirty = unionBox(entry.previewDirty, next);
+      const page = entryPage(entry);
+      if (!(dirty && page && entry.rect && repaintRegion(page, entry.rect, dirty))) {
+        repaintAll();
+      }
+      if (entry.selectBox) {
         const b = normalizedBox(entry.box);
         if (b) {
           withPage(entry.rect, (c2) => {
@@ -814,6 +1031,7 @@ export function createDrawingSurface(canvas, viewport, hooks, options = {}) {
           c2.restore();
         });
       }
+      entry.previewDirty = next;
     } else if (!entry.erasing && !entry.typing) {
       withPage(entry.rect, (c2) => paintNewPieces(c2, entry.stroke, entry));
     }
