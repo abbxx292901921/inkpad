@@ -46,12 +46,19 @@ under a subpath like `/inkpad/`.
 - **Stroke**: tap the line button in the options row for the thickness slider
   and the four line styles (solid / hairline / dashed / dotted).
 - **Shapes**: tap the shape button for the picker — line, rectangle, ellipse,
-  triangle, arrow — plus the Freeform/Boxed fill mode. Hold **Shift** while
-  dragging to disable the 45°/square snapping.
-- **Text**: tap the T button, then tap where you want the text. A caret
-  appears; type and press Done. The text is a real object on the page, so you
-  can select it and drag it around. The stroke slider sets the font size
-  when the text tool is active.
+  triangle, arrow, and a custom polygon you draw yourself (up to six
+  vertices). Two ways to draw:
+  - **Boxed** — drag out a rectangle and the shape is fitted inside it.
+  - **Freeform** — draw the outline yourself and the shape *is* that outline.
+
+  After drawing, select the shape (the Select tool) and its **vertices become
+  draggable** — they snap to a nearby vertex or edge of another shape, and
+  the small square button regularises it into a square or an equilateral
+  polygon.
+- **Text**: tap the `T`, then **drag out a box**. The text is typed inside
+  it, wrapped to the box, and the font size is fitted to it. **Enter adds a
+  new line**; Done (or Cmd/Ctrl+Enter) saves it. The stroke slider sets the
+  font size.
 - **Select**: tap the select button and draw a lasso around your ink. A blue
   dashed box with corner handles and a rotation handle appears; drag the
   handles to scale or rotate, drag the box to move, and Cmd/Ctrl+A to select
@@ -69,12 +76,18 @@ under a subpath like `/inkpad/`.
   page — or your selection, cropped to it — is sent as an image, so the model
   can read your handwriting. The choice is yours: Inkpad never switches
   provider on its own and never retries.
+
+  Gemini, Groq, OpenRouter and any local server work from the browser.
+  **OpenAI, Anthropic and NVIDIA NIM cannot** — they send no CORS headers.
+  `worker/inkpad-proxy.js` is a Cloudflare Worker that fixes that; see
+  `worker/README.md` for the deployment.
 - **Print / Save as PDF** and **Download as PNG** are in the more menu.
 - Two-finger pinch zooms and pans; ctrl+wheel does the same on a trackpad.
-- The Pencil needs no pairing. The moment any Pencil event is seen, fingers
-  stop drawing so you can rest your hand on the screen; tap the
-  finger-drawing button if you *want* fingers to draw as well. The choice is
-  remembered.
+- The Pencil needs no pairing. The moment any Pencil event is seen, a finger
+  **pans the page** instead of drawing, so you can rest your hand on the
+  screen while you write. Tap the finger button in the right pill to change
+  that: it cycles *draws* → *ignored* → *automatic*. Two fingers always
+  pinch-zoom.
 - Press `D` for the debug overlay; `__inkpad` in the console exposes
   `{ note, page, strokes, selected, viewport, surface, history, palettes }`.
 
@@ -84,7 +97,7 @@ under a subpath like `/inkpad/`.
 node tests/run-all.mjs
 ```
 
-Ten plain Node suites, 494 checks, no framework and no dependencies.
+Fifteen plain Node suites, 943 checks, no framework and no dependencies.
 
 ## Offline
 

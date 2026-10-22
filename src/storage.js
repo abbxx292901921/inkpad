@@ -227,6 +227,8 @@ export function toStrokeRecord(stroke) {
     record.kind = 'text';
     record.text = stroke.text ?? '';
     record.size = stroke.size ?? 28;
+    record.w = stroke.w ?? 0;
+    record.h = stroke.h ?? 0;
     record.x = stroke.x ?? stroke.points?.[0]?.x ?? 0;
     record.y = stroke.y ?? stroke.points?.[0]?.y ?? 0;
   }

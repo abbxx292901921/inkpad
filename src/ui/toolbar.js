@@ -212,12 +212,19 @@ export function buildToolbar(root, actions) {
       strokeGroup.style.display = state.showWidths === false ? 'none' : '';
       undoBtn.disabled = !state.canUndo;
       redoBtn.disabled = !state.canRedo;
-      fingerBtn.setAttribute('aria-pressed', String(!!state.fingerDrawing));
-      fingerBtn.title = state.fingerDrawing
-        ? 'Finger drawing ON — fingers draw as well as the Pencil. Tap for pen only.'
-        : 'Pen only — fingers are ignored (palm rejection). Tap to allow finger drawing.';
+      // The finger toggle has three states: the finger draws, the finger pans
+      // the page, or the finger is ignored.
+      const action = state.fingerAction ?? (state.fingerDrawing ? 'draw' : 'none');
+      fingerBtn.setAttribute('aria-pressed', String(action !== 'none'));
+      fingerBtn.dataset.action = action;
+      const fingerText = {
+        draw: 'Finger draws — a finger adds ink.',
+        pan: 'Finger pans — one finger scrolls the page.',
+        none: 'Finger ignored — only the Pencil draws.',
+      }[action];
+      fingerBtn.title = `${fingerText} Tap to change.`;
       fingerBtn.setAttribute('aria-label', fingerBtn.title);
-      const wantKey = state.fingerDrawing ? 'nibFinger' : 'nib';
+      const wantKey = action === 'draw' ? 'nibFinger' : action === 'pan' ? 'pan' : 'nib';
       const cur = fingerBtn.querySelector('svg');
       if (!cur || cur.getAttribute('data-icon') !== wantKey) {
         fingerBtn.textContent = '';

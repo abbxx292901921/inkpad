@@ -22,12 +22,16 @@ const SHAPE_ICONS = {
   ellipse: 'shapeEllipse',
   triangle: 'shapeTriangle',
   arrow: 'shapeArrow',
+  custom: 'shapeCustom',
 };
 
-// The two fill modes: an outline only, or a filled box.
-const FILL_MODES = [
-  { id: 'freeform', label: 'Freeform', icon: 'freeform' },
-  { id: 'boxed', label: 'Boxed', icon: 'boxed' },
+// The two DRAW modes. They differ in HOW you draw, not in how the shape is
+// filled:
+//   Boxed    — drag out a rectangle; the shape is fitted into it.
+//   Freeform — draw the outline yourself; the shape IS that outline.
+const DRAW_MODES = [
+  { id: 'boxed', label: 'Boxed', icon: 'boxed', help: 'Drag a box and the shape fits inside it.' },
+  { id: 'freeform', label: 'Freeform', icon: 'freeform', help: 'Draw the outline yourself.' },
 ];
 
 function injectStyles() {
@@ -40,7 +44,7 @@ function injectStyles() {
   document.head.appendChild(link);
 }
 
-export function buildShapeMenu({ onSelectShape, onSelectFill, onClose } = {}) {
+export function buildShapeMenu({ onSelectShape, onSelectMode, onClose } = {}) {
   // Import-safe: the module can be pulled into a Node test without a DOM.
   if (typeof document === 'undefined') {
     return {
@@ -85,24 +89,24 @@ export function buildShapeMenu({ onSelectShape, onSelectFill, onClose } = {}) {
   }
   root.appendChild(shapeRow);
 
-  // --- freeform / boxed ---
+  // --- boxed / freeform ---
   const seg = el('div', 'shape-menu-seg');
   seg.setAttribute('role', 'group');
-  seg.setAttribute('aria-label', 'Shape fill mode');
+  seg.setAttribute('aria-label', 'How to draw the shape');
   const segBtns = new Map();
-  for (const mode of FILL_MODES) {
+  for (const mode of DRAW_MODES) {
     const b = el('button', 'shape-seg');
     b.type = 'button';
-    b.dataset.fill = mode.id;
-    b.title = mode.label;
-    b.setAttribute('aria-label', `${mode.label} shapes`);
+    b.dataset.mode = mode.id;
+    b.title = `${mode.label} — ${mode.help}`;
+    b.setAttribute('aria-label', `${mode.label}: ${mode.help}`);
     b.setAttribute('aria-pressed', 'false');
     b.appendChild(icon(mode.icon, { size: 16 }));
     b.appendChild(el('span', 'shape-seg-label', mode.label));
     b.addEventListener('click', () => {
-      current.fill = mode.id;
+      current.mode = mode.id;
       paint();
-      onSelectFill?.(mode.id);
+      onSelectMode?.(mode.id);
     });
     seg.appendChild(b);
     segBtns.set(mode.id, b);
@@ -112,7 +116,7 @@ export function buildShapeMenu({ onSelectShape, onSelectFill, onClose } = {}) {
   document.body.appendChild(root);
 
   // --- state ---
-  const current = { shape: 'rect', fill: 'freeform' };
+  const current = { shape: 'rect', mode: 'boxed' };
   let anchor = null;
 
   function paint() {
@@ -122,7 +126,7 @@ export function buildShapeMenu({ onSelectShape, onSelectFill, onClose } = {}) {
       b.classList.toggle('is-active', on);
     }
     for (const [id, b] of segBtns) {
-      const on = id === current.fill;
+      const on = id === current.mode;
       b.setAttribute('aria-pressed', String(on));
       b.classList.toggle('is-active', on);
     }
@@ -187,7 +191,7 @@ export function buildShapeMenu({ onSelectShape, onSelectFill, onClose } = {}) {
     element: root,
     update(state = {}) {
       if (state.shape && SHAPE_KINDS.includes(state.shape)) current.shape = state.shape;
-      if (state.fill && FILL_MODES.some((m) => m.id === state.fill)) current.fill = state.fill;
+      if (state.mode && DRAW_MODES.some((m) => m.id === state.mode)) current.mode = state.mode;
       paint();
     },
     open,

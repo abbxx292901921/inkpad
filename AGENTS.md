@@ -46,12 +46,17 @@ Regenerate the service worker's precache list after adding a file:
   collects a lasso path.
 - `src/strokes.js` — stroke data model (vector) + render helpers + undo/redo
   history + eraser hit-testing + transform snapshots.
-- `src/shapes.js` — shape geometry. A shape IS a stroke (its points are the
-  vertices), so undo, persistence, export and hit-testing work on it for free.
-- `src/transform.js` — bounds, move/scale/rotate maths for the selection.
+- `src/shapes.js` — shape geometry. A shape IS a stroke: its points are the
+  VERTICES, so undo, persistence, export and hit-testing work on it for
+  free. Two DRAW modes: `boxed` (drag a rectangle, the shape is fitted into
+  it) and `freeform` (the shape IS the outline you draw). `setVertex`,
+  `snapVertex` (snaps a dragged vertex to a nearby vertex or EDGE of another
+  shape) and `toSquare` (the square/regular-polygon preset) live here too.
 - `src/text.js` — text objects. A text object is a stroke-like object with
-  `kind: 'text'`: it lives in the page's object list, so undo, the lasso,
-  persistence and PNG export all work on it for free.
+  `kind: 'text'` and a BOX (`x, y, w, h`): the text tool drags out a
+  rectangle and the text is typed inside it, wrapped to the box, with the
+  font size fitted to it.
+- `src/transform.js` — bounds, move/scale/rotate maths for the selection.
 - `src/tools.js` — tool registry: pen, marker, pencil, shape, select, eraser.
   Per-tool options (`{ color, width, opacity, lineStyle, pressureTaper }` for
   ink, `{ shape, fill }` for shapes, `{ radius }` for the eraser).
@@ -69,12 +74,17 @@ Regenerate the service worker's precache list after adding a file:
   (floating panel primitive + colour wheel), `toolbar.js` (the pill + island),
   `palette.js` (the "Colors" card), `stroke-panel.js` (the "Stroke" card),
   `shape-menu.js` (the shape picker), `selection.js` (the transform box),
+  `shape-editor.js` (the draggable vertex handles),
   `library.js` (the notes screen), `ruler.js` + `rotation-dial.js`,
   `settings.js` (the AI providers sheet), `ask-ai.js` (the Ask AI panel),
   `text-input.js` (the on-canvas text field), `prompt.js` (text and list
   prompts).
   UI-only CSS lives beside its module and is injected at runtime — there is no
   bundler to bundle it.
+- `worker/inkpad-proxy.js` — a Cloudflare Worker that proxies AI API calls
+  so providers that block browser calls (OpenAI, Anthropic, NVIDIA NIM) can be
+  used. The key lives in the worker's bindings, never in the app. See
+  `worker/README.md`.
 - `src/ai/` — the AI layer: `providers.js`, `client.js`, `presets.js`,
   `models.js`. See "AI providers" below.
 - `src/coord.js` — the ONLY screen<->page conversion. Nothing else touches zoom/pan/dpr.
@@ -156,6 +166,9 @@ Pan/zoom gestures:
   BASELINE (the zoom and pan at the moment the gesture started), NOT from the
   live viewport — otherwise every pointermove multiplies the zoom again and
   the gesture runs away to the limit.
+- ONE finger pans the page when the finger policy says 'pan' (the default
+  once the Pencil has been used). It is a pan, not a draw, so it can never
+  leave ink.
 - Wheel pans; ctrl+wheel (the trackpad pinch gesture) zooms about the cursor.
 - A resting hand is dropped from a 3+ touch gesture, so it cannot drag the
   page around.
@@ -226,9 +239,12 @@ Rules:
   excalidraw/excalidraw#4657):
   - `pointerType` IS `'pen'` for an Apple Pencil with NO pairing required.
     Pairing only buys double-tap / Pencil Pro gestures.
-  - The rule is a **latch, not a timer**: once ANY pen event is seen (contact
-    OR hover), a finger never draws again for the rest of the session. The old
-    1500ms grace window expired and let the hand back in — that was the bug.
+  - The finger policy has THREE states. `auto` (the default): a finger DRAWS
+    until the Pencil is seen, and after that a finger PANS the page — one
+    finger is enough to scroll, and a resting hand cannot leave ink. The user
+    can override with `on` (a finger always draws) or `off` (a finger is
+    ignored). The explicit choice wins forever after it is made. Persisted in
+    `localStorage` under `inkpad.input.v1`.
   - `pointercancel` **DISCARDS** the stroke; it never commits. iPadOS cancels a
     finger pointer when a pen takes over the digitizer, so a cancelled finger
     is a hand, not ink. The old code committed on cancel — that was the main
@@ -238,9 +254,6 @@ Rules:
   - A touch contact whose ellipse is bigger than `PALM_CONTACT_PX` (70 CSS px)
     is a resting palm, not a fingertip, and is ignored. iOS reports 0 when the
     geometry is unknown; then this filter stays quiet.
-  - The user can override with the toolbar's finger-drawing toggle. An
-    explicit choice wins forever after it is made; until then the auto rule
-    applies. Persisted in `localStorage` under `inkpad.input.v1`.
 - **Squeeze / eraser end**: `buttons & 32` (or `button === 5`) = the pen's
   eraser end → erases whatever tool is selected. `buttons & 2` = barrel button
   → also erases. Switching mid-stroke commits the ink drawn so far.
@@ -316,9 +329,10 @@ Rules:
   library.
 - (phase C) No keyboard shortcut for the tools yet (undo/redo are bound to
   Ctrl/Cmd+Z and Ctrl/Cmd+Shift+Z).
-- (phase C) OpenAI and Anthropic cannot be called from a browser at all
-  (no CORS headers). Gemini, Groq, OpenRouter and any local server can. A
-  proxy is the fix; that is a separate deployment and has not been built.
+- (phase C) OpenAI, Anthropic and NVIDIA NIM cannot be called from a browser
+  at all (no CORS headers). Gemini, Groq, OpenRouter and any local server
+  can. `worker/inkpad-proxy.js` is the fix — it is written and tested, but
+  it has to be DEPLOYED by the user (a Cloudflare account is needed).
 - (phase C) The `gemini-interactions` provider kind is implemented against an
   UNVERIFIED upstream shape. `responseTextPath` can override where the answer
   is read.

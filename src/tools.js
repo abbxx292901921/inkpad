@@ -95,7 +95,9 @@ registerTool('shape', {
   kind: 'shape',
   icon: 'shapeRect',
   // A shape IS a stroke: the vertices are its points. `shape` says which
-  // one, `fill` is the Freeform/Boxed mode from the reference.
+  // one, `mode` is how you draw it ('boxed' fits the shape into a rectangle
+  // you drag, 'freeform' uses the outline you draw), and `fill` says whether
+  // the closed shape is filled.
   options: {
     color: '#1b1b1b',
     width: 3,
@@ -103,7 +105,8 @@ registerTool('shape', {
     lineStyle: LINE_STYLE_SOLID,
     pressureTaper: false,
     shape: 'rect',
-    fill: 'freeform',
+    mode: 'boxed',
+    fill: false,
   },
   widthRange: { min: 1, max: 20 },
 });

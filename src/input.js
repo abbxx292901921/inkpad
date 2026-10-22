@@ -10,12 +10,18 @@
 // reason Excalidraw ships a pen-mode toggle — excalidraw/excalidraw#4657.)
 //
 // POLICY (the Excalidraw "pen mode" pattern, persisted across reloads):
-//   explicit === null   -> finger draws UNTIL a pen is seen; after that it
-//                          stops. Default, needs no user action.
-//   explicit === true   -> finger always draws ("Pen + finger").
-//   explicit === false  -> finger never draws ("Pen only").
-// The user's explicit choice wins permanently once made; until then the auto
-// rule applies. Mouse is never affected — desktop has no palm problem.
+//   explicit === 'on'   -> a finger DRAWS, always
+//   explicit === 'off'  -> a finger is ignored entirely
+//   explicit === null   -> AUTOMATIC: a finger draws until the Pencil is
+//                          seen, and after that a finger PANS the page
+//                          (one finger is enough to scroll), because a
+//                          hand resting on the screen while you write with
+//                          the Pencil must not leave ink behind, but it
+//                          should still be able to move the page.
+//
+// The user's explicit choice wins permanently once made; until then the
+// automatic rule applies. Mouse is never affected — desktop has no palm
+// problem.
 //
 // Storage key: `inkpad.input.v1`.
 
@@ -37,7 +43,8 @@ function safeStorage() {
 // instance below; tests create their own so one test cannot leak state into
 // the next.
 export function createInputPolicy({ persist = true } = {}) {
-  let explicit = null; // null = no explicit choice yet | true | false
+  // null = no explicit choice yet | 'on' | 'off'
+  let explicit = null;
   let penDetected = false;
   const listeners = new Set();
 
@@ -49,7 +56,14 @@ export function createInputPolicy({ persist = true } = {}) {
       const raw = s.getItem(STORAGE_KEY);
       if (raw === null) return null;
       const parsed = JSON.parse(raw);
-      if (parsed && typeof parsed.fingerDrawing === 'boolean') return parsed.fingerDrawing;
+      if (parsed && typeof parsed.fingerDrawing === 'boolean') {
+        return parsed.fingerDrawing ? 'on' : 'off';
+      }
+      if (parsed && typeof parsed.fingerDrawing === 'string') {
+        if (parsed.fingerDrawing === 'on' || parsed.fingerDrawing === 'off') {
+          return parsed.fingerDrawing;
+        }
+      }
     } catch {
       // ignore malformed data
     }
@@ -74,6 +88,7 @@ export function createInputPolicy({ persist = true } = {}) {
       explicit,
       penDetected,
       fingerDrawing: fingerDrawingEnabled(),
+      fingerAction: fingerAction(),
     };
   }
 
@@ -100,26 +115,26 @@ export function createInputPolicy({ persist = true } = {}) {
     return penDetected;
   }
 
-  // True when a finger is currently allowed to draw.
+  // True when a finger is allowed to draw.
   function fingerDrawingEnabled() {
-    if (explicit !== null) return explicit;
-    return !penDetected;
+    return fingerAction() === 'draw';
   }
 
-  // Flip the user's explicit preference. Returns the new effective state.
+  // What a finger does RIGHT NOW: 'draw' | 'pan' | 'none'.
+  function fingerAction() {
+    if (explicit === 'on') return 'draw';
+    if (explicit === 'off') return 'none';
+    // Automatic: a finger draws until the Pencil is in use; after that it
+    // pans the page instead, so one finger is enough to scroll.
+    return penDetected ? 'pan' : 'draw';
+  }
+
+  // Cycle the preference: automatic -> always draws -> ignored -> automatic.
   function toggleFingerDrawing() {
-    explicit = !fingerDrawingEnabled();
-    writeStoredChoice(explicit);
-    emit();
-    return fingerDrawingEnabled();
-  }
-
-  // Set the user's explicit preference directly. `true` = fingers always
-  // draw, `false` = fingers never draw. Passing `null` clears it and returns
-  // to the automatic rule.
-  function setFingerDrawing(value) {
-    if (value === null) {
-      explicit = null;
+    const order = [null, 'on', 'off'];
+    const next = order[(order.indexOf(explicit) + 1) % order.length];
+    explicit = next;
+    if (next === null) {
       const s = safeStorage();
       if (s && persist) {
         try {
@@ -129,11 +144,32 @@ export function createInputPolicy({ persist = true } = {}) {
         }
       }
     } else {
-      explicit = !!value;
-      writeStoredChoice(explicit);
+      writeStoredChoice(next);
     }
     emit();
-    return fingerDrawingEnabled();
+    return fingerAction();
+  }
+
+  // Set the preference directly: 'on' | 'off' | null (automatic).
+  // `true`/`false` are accepted as 'on'/'off'.
+  function setFingerDrawing(value) {
+    const next = value === true ? 'on' : value === false ? 'off' : value;
+    if (next === 'on' || next === 'off') {
+      explicit = next;
+      writeStoredChoice(next);
+    } else {
+      explicit = null;
+      const s = safeStorage();
+      if (s && persist) {
+        try {
+          s.removeItem(STORAGE_KEY);
+        } catch {
+          // ignore
+        }
+      }
+    }
+    emit();
+    return fingerAction();
   }
 
   // Back to the automatic rule (finger draws until a pen appears).
@@ -160,6 +196,7 @@ export function createInputPolicy({ persist = true } = {}) {
     notePenSeen,
     isPenDetected,
     fingerDrawingEnabled,
+    fingerAction,
     toggleFingerDrawing,
     setFingerDrawing,
     resetFingerDrawing,
@@ -174,6 +211,7 @@ export const defaultInput = createInputPolicy();
 export const notePenSeen = () => defaultInput.notePenSeen();
 export const isPenDetected = () => defaultInput.isPenDetected();
 export const fingerDrawingEnabled = () => defaultInput.fingerDrawingEnabled();
+export const fingerAction = () => defaultInput.fingerAction();
 export const toggleFingerDrawing = () => defaultInput.toggleFingerDrawing();
 export const setFingerDrawing = (v) => defaultInput.setFingerDrawing(v);
 export const resetFingerDrawing = () => defaultInput.resetFingerDrawing();

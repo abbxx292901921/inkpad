@@ -16,7 +16,6 @@
   user-select: none;
   -webkit-touch-callout: none;
   -webkit-tap-highlight-color: transparent;
-  -webkit-tap-highlight-color: transparent;
 }
 
 .txi[hidden] {
@@ -30,6 +29,13 @@
   min-width: 240px;
   max-width: min(520px, 78vw);
   pointer-events: none;
+}
+
+/* The user drew a box, so the field IS that box: the width limits of the
+   default field would fight the box the user drew. */
+.txi-box--sized {
+  min-width: 0;
+  max-width: none;
 }
 
 .txi-field {
@@ -48,9 +54,11 @@
   /* Matches the line height the canvas renderer uses. */
   line-height: 1.2;
   resize: none;
-  /* A long text scrolls inside the field instead of growing over the page. */
-  max-height: 30vh;
+  /* A long text scrolls inside the field instead of growing over the page.
+     The height is set by the script (to the drawn box, clamped to the visible
+     area), so there is no max-height to fight it. */
   overflow-y: auto;
+  box-sizing: border-box;
   pointer-events: auto;
   touch-action: manipulation;
   /* The field is a real text field: it must be selectable and editable,
@@ -61,9 +69,28 @@
   caret-color: currentColor;
 }
 
+/* Inside a drawn box the text must start exactly at the box edge and wrap at
+   the box width, so the padding that the free-floating field uses is gone. */
+.txi-box--sized .txi-field {
+  padding: 0;
+}
+
+/* --- the hint and the Done button ------------------------------------------- */
+
+/* They hang BELOW the field, so a narrow box cannot squeeze them. */
+.txi-actions {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 6px;
+  pointer-events: none;
+  white-space: nowrap;
+}
+
 .txi-hint {
-  margin-top: 4px;
-  padding-left: 4px;
   font-size: 12px;
   line-height: 1.2;
   color: var(--muted, #8e8e93);
@@ -73,7 +100,6 @@
 /* --- the Done button ------------------------------------------------------- */
 
 .txi-done {
-  margin-top: 6px;
   padding: 7px 16px;
   border: 0;
   border-radius: 999px;

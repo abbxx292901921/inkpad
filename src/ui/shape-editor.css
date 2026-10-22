@@ -1,0 +1,108 @@
+/* ui/shape-editor.css — the shape vertex editor overlay.
+   theme.css is owned by another agent, so these styles live here and
+   ui/shape-editor.js links the file in at runtime (no build step).
+   Colours come from the reference screenshots (§5): accent blue #0a84ff. */
+
+.shape-editor {
+  position: fixed;
+  inset: 0;
+  z-index: 5;
+  /* The layer itself never takes a click: only the handles and the buttons
+     do, so a stroke can still start anywhere else on the page. */
+  pointer-events: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.shape-editor[hidden] {
+  display: none;
+}
+
+/* --- the dashed outline of the shape ---------------------------------------- */
+
+.shape-editor-svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.shape-editor-outline {
+  fill: none;
+  stroke: #0a84ff;
+  stroke-width: 1.5;
+  stroke-dasharray: 5 4;
+  stroke-linejoin: round;
+}
+
+/* --- the vertex handles ---------------------------------------------------- */
+
+.shape-editor-handle {
+  --shape-handle-size: 12px;
+  position: absolute;
+  width: var(--shape-handle-size);
+  height: var(--shape-handle-size);
+  /* Centred on the point the app gave us. */
+  margin-left: calc(var(--shape-handle-size) / -2);
+  margin-top: calc(var(--shape-handle-size) / -2);
+  border-radius: 50%;
+  background: #0a84ff;
+  border: 2px solid #ffffff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+  pointer-events: auto;
+  touch-action: none;
+  cursor: grab;
+}
+
+/* A shape with many vertices (an ellipse) gets smaller handles, or they
+   would cover the shape they are editing. */
+.shape-editor.is-dense .shape-editor-handle {
+  --shape-handle-size: 8px;
+}
+
+.shape-editor-handle:focus-visible {
+  outline: 2px solid #0a84ff;
+  outline-offset: 2px;
+}
+
+/* --- the square + delete buttons -------------------------------------------- */
+
+.shape-editor-tools {
+  position: absolute;
+  display: flex;
+  gap: 6px;
+  pointer-events: auto;
+}
+
+.shape-editor-btn {
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  border-radius: 8px;
+  background: #ffffff;
+  color: #0a84ff;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
+  touch-action: none;
+  cursor: pointer;
+}
+
+.shape-editor-btn:active {
+  background: #f2f2f7;
+}
+
+.shape-editor-del {
+  color: #ff3b30;
+}
+
+.shape-editor-btn:focus-visible {
+  outline: 2px solid #0a84ff;
+  outline-offset: 2px;
+}

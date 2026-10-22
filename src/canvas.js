@@ -105,6 +105,9 @@ export function createDrawingSurface(canvas, viewport, hooks) {
   const touches = new Map();
   // The active two-finger gesture baseline, or null.
   let pinch = null;
+  // The baseline of a ONE-finger pan: where the finger went down and where
+  // the page was at that moment.
+  let panBase = null;
   let debugOn = false;
   let lastPenAt = 0; // timestamp of the most recent pen event (hover or contact)
 
@@ -192,6 +195,24 @@ export function createDrawingSurface(canvas, viewport, hooks) {
     return { x: rawEvent.clientX - rect.left, y: rawEvent.clientY - rect.top };
   }
 
+  // Build the shape a gesture describes. 'boxed' mode fits the chosen shape
+  // into the rectangle you dragged; 'freeform' mode uses the outline you
+  // drew.
+  function buildShape(draft, tool) {
+    return createShapeStroke({
+      kind: draft.kind,
+      mode: draft.mode,
+      box: { x0: draft.x0, y0: draft.y0, x1: draft.x1, y1: draft.y1 },
+      path: draft.path,
+      color: tool.options.color,
+      width: tool.options.width,
+      opacity: tool.options.opacity ?? 1,
+      lineStyle: tool.options.lineStyle ?? 'solid',
+      fill: draft.fill,
+      snap: draft.snap !== false,
+    });
+  }
+
   // Paint the pieces that became drawable with the new points.
   // piece i needs p[i+1], so after adding points the last drawable piece is
   // (pointCount - 2) in 1-based piece numbering.
@@ -238,8 +259,8 @@ export function createDrawingSurface(canvas, viewport, hooks) {
     );
   }
 
-  // A finger may draw only when the user has finger drawing enabled AND the
-  // contact is small enough to be a fingertip rather than a resting palm.
+  // A finger may draw only when the policy says so AND the contact is small
+  // enough to be a fingertip rather than a resting palm.
   function touchMayDraw(e) {
     if (!policy.fingerDrawingEnabled()) return false;
     return !isPalmContact(e);
@@ -370,15 +391,31 @@ export function createDrawingSurface(canvas, viewport, hooks) {
         downAt: performance.now(),
         moved: false,
       });
-      // A second finger turns the gesture into a pan/zoom.
-      if (startPinchIfPossible()) {
-        reportDebug(e, 'down (gesture: pinch)', 1);
+      // Two fingers always mean a pinch/zoom, whatever the finger policy is.
+      if (touches.size >= 2) {
+        if (startPinchIfPossible()) {
+          reportDebug(e, 'down (gesture: pinch)', 1);
+        }
         return;
       }
-      if (!touchMayDraw(e)) {
-        // PALM REJECTION: either a pen has been seen (so a finger is a
-        // resting hand) or the contact is too large to be a fingertip.
+      // ONE finger: what it does depends on the policy.
+      const action = policy.fingerAction();
+      if (action === 'pan') {
+        // A finger pans the page. This is what makes a resting hand safe
+        // once the Pencil is in use: the hand cannot leave ink, but it can
+        // still scroll the page.
+        panBase = { id: e.pointerId, x: p.x, y: p.y, panX: viewport.panX, panY: viewport.panY };
+        reportDebug(e, 'down (gesture: pan)', 1);
+        return;
+      }
+      if (action === 'none') {
         reportDebug(e, 'down (ignored: palm rejection)', 1);
+        return;
+      }
+      // action === 'draw': fall through to the normal stroke setup, unless
+      // the contact is a resting palm rather than a fingertip.
+      if (isPalmContact(e)) {
+        reportDebug(e, 'down (ignored: palm contact)', 1);
         return;
       }
     }
@@ -399,11 +436,13 @@ export function createDrawingSurface(canvas, viewport, hooks) {
     const shapeDraft = shaping
       ? {
           kind: tool.options.shape ?? 'rect',
-          fill: tool.options.fill === 'boxed',
+          mode: tool.options.mode ?? 'boxed',
+          fill: tool.options.fill === true,
           x0: 0,
           y0: 0,
           x1: 0,
           y1: 0,
+          path: [],
         }
       : null;
 
@@ -440,6 +479,7 @@ export function createDrawingSurface(canvas, viewport, hooks) {
         entry.shape.y0 = pt.y;
         entry.shape.x1 = pt.x;
         entry.shape.y1 = pt.y;
+        entry.shape.path.push({ x: pt.x, y: pt.y });
       } else addPoint(entry.stroke, pt.x, pt.y, pt.pressure);
     }
     if (!erasing && !selecting && !shaping && !typing) {
@@ -493,6 +533,16 @@ export function createDrawingSurface(canvas, viewport, hooks) {
         }
         return;
       }
+      if (panBase) {
+        // A ONE-finger pan. The pan is in screen pixels, so the finger's
+        // movement maps straight onto it.
+        const p = screenPoint(e);
+        viewport.panX = panBase.panX + (p.x - panBase.x);
+        viewport.panY = panBase.panY + (p.y - panBase.y);
+        repaintAll();
+        if (hooks.onViewportChange) hooks.onViewportChange();
+        return;
+      }
     }
 
     const entry = active.get(e.pointerId);
@@ -519,6 +569,7 @@ export function createDrawingSurface(canvas, viewport, hooks) {
         entry.shape.x1 = pt.x;
         entry.shape.y1 = pt.y;
         entry.shape.snap = !e.shiftKey;
+        entry.shape.path.push({ x: pt.x, y: pt.y });
       } else addPoint(entry.stroke, pt.x, pt.y, pt.pressure);
     }
     if (entry.shape) {
@@ -526,19 +577,7 @@ export function createDrawingSurface(canvas, viewport, hooks) {
       repaintAll();
       applyTransform(ctx, viewport);
       const tool = getCurrentTool();
-      const draft = createShapeStroke({
-        kind: entry.shape.kind,
-        x0: entry.shape.x0,
-        y0: entry.shape.y0,
-        x1: entry.shape.x1,
-        y1: entry.shape.y1,
-        color: tool.options.color,
-        width: tool.options.width,
-        opacity: tool.options.opacity ?? 1,
-        lineStyle: tool.options.lineStyle ?? 'solid',
-        fill: entry.shape.fill,
-        snap: entry.shape.snap !== false,
-      });
+      const draft = buildShape(entry.shape, tool);
       renderShape(ctx, draft);
     } else if (entry.selecting) {
       // The lasso trail, so the gesture is visible while it is happening.
@@ -574,6 +613,13 @@ export function createDrawingSurface(canvas, viewport, hooks) {
         endPinch();
         // Any finger still down starts a fresh gesture when the next one lands.
       }
+      if (panBase && e.pointerId === panBase.id) {
+        panBase = null;
+      }
+      // A one-finger pan is over when the finger lifts.
+      if (touches.size === 0) {
+        panBase = null;
+      }
     }
     const entry = active.get(e.pointerId);
     if (!entry) return;
@@ -605,33 +651,28 @@ export function createDrawingSurface(canvas, viewport, hooks) {
       return;
     }
     if (entry.typing) {
-      // A tap with the text tool places the caret. A drag is not a text.
+      // The text tool drags a BOX: the text is typed inside it.
       const first = entry.path[0];
-      if (first && hooks.onTextTap) hooks.onTextTap({ x: first.x, y: first.y });
+      const last = entry.path[entry.path.length - 1] || first;
+      if (first && hooks.onTextBox) {
+        hooks.onTextBox({
+          x: Math.min(first.x, last.x),
+          y: Math.min(first.y, last.y),
+          w: Math.abs(last.x - first.x),
+          h: Math.abs(last.y - first.y),
+        });
+      }
       return;
     }
     if (entry.shape) {
       // Commit the shape as an ordinary stroke, so undo, persistence and
       // export all work on it for free.
       const tool = getCurrentTool();
-      const shape = createShapeStroke({
-        kind: entry.shape.kind,
-        x0: entry.shape.x0,
-        y0: entry.shape.y0,
-        x1: entry.shape.x1,
-        y1: entry.shape.y1,
-        color: tool.options.color,
-        width: tool.options.width,
-        opacity: tool.options.opacity ?? 1,
-        lineStyle: tool.options.lineStyle ?? 'solid',
-        pointerType: e.pointerType,
-        fill: entry.shape.fill,
-        snap: entry.shape.snap !== false,
-      });
+      const shape = buildShape(entry.shape, tool);
       // A tap without a drag is not a shape.
       const moved =
         Math.abs(entry.shape.x1 - entry.shape.x0) + Math.abs(entry.shape.y1 - entry.shape.y0);
-      if (moved < 3) {
+      if (moved < 3 && entry.shape.path.length < 3) {
         repaintAll();
         return;
       }

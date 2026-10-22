@@ -233,7 +233,8 @@ ok(supportsLineStyle('eraser') === false, 'eraser does not support line styles')
 ok(supportsLineStyle('shape') === true, 'shape supports line styles');
 ok(supportsLineStyle('select') === false, 'select does not support line styles');
 ok(getToolOptions('shape').shape === 'rect', 'shape tool default kind');
-ok(getToolOptions('shape').fill === 'freeform', 'shape tool default fill mode');
+ok(getToolOptions('shape').mode === 'boxed', 'shape tool default draw mode');
+ok(getToolOptions('shape').fill === false, 'shape tool is not filled by default');
 ok(getToolOptions('shape').pressureTaper === false, 'shape has a constant width');
 ok(getTool('select').kind === 'select', 'select tool is a select tool');
 ok(getTool('shape').kind === 'shape', 'shape tool is a shape tool');

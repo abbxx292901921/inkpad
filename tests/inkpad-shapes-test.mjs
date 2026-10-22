@@ -1,6 +1,6 @@
-// Node test for src/shapes.js.
+// Node test for src/shapes.js and src/ui/shape-editor.js.
 //
-//   node inkpad-shapes-test.mjs
+//   node tests/inkpad-shapes-test.mjs
 //
 // The repo is a static site with no test runner, so this is a plain script:
 // it prints "ALL N CHECKS PASSED" and exits non-zero on the first failure.
@@ -8,21 +8,30 @@
 
 import { pathToFileURL, fileURLToPath } from 'node:url';
 
-const REPO = process.env.INKPAD_REPO || fileURLToPath(new URL('..', import.meta.url));
+const SRC = fileURLToPath(new URL('../src', import.meta.url));
 
 const {
   SHAPE_KINDS,
   SHAPE_LABELS,
+  SHAPE_MODES,
+  MAX_CUSTOM_VERTICES,
   shapePoints,
+  shapeVertices,
+  simplifyPath,
   snapAngle,
   snapSquare,
   snapToGrid,
+  snapVertex,
+  setVertex,
+  toSquare,
+  vertexPositions,
   shapeOutline,
   shapeHitTest,
   renderShape,
   createShapeStroke,
   isShapeStroke,
-} = await import(pathToFileURL(`${REPO}/src/shapes.js`).href);
+  isClosedShape,
+} = await import(pathToFileURL(`${SRC}/shapes.js`).href);
 
 let checks = 0;
 
@@ -36,6 +45,10 @@ function check(name, cond) {
 
 function near(a, b, eps = 1e-6) {
   return Math.abs(a - b) <= eps;
+}
+
+function samePoint(a, b, eps = 1e-6) {
+  return near(a.x, b.x, eps) && near(a.y, b.y, eps);
 }
 
 // A fake 2D context: it only counts the calls the renderer makes.
@@ -65,11 +78,21 @@ function makeCtx() {
   };
 }
 
+const BOX = { x0: 0, y0: 0, x1: 100, y1: 50 };
+
 // --- the module imports cleanly in Node -------------------------------------
 check(
   'shapes.js exports the expected API',
-  SHAPE_KINDS.length === 5 &&
+  SHAPE_KINDS.length === 6 &&
+    SHAPE_MODES.length === 2 &&
+    MAX_CUSTOM_VERTICES === 6 &&
     typeof shapePoints === 'function' &&
+    typeof shapeVertices === 'function' &&
+    typeof simplifyPath === 'function' &&
+    typeof vertexPositions === 'function' &&
+    typeof setVertex === 'function' &&
+    typeof toSquare === 'function' &&
+    typeof snapVertex === 'function' &&
     typeof snapAngle === 'function' &&
     typeof snapSquare === 'function' &&
     typeof snapToGrid === 'function' &&
@@ -79,119 +102,147 @@ check(
     typeof createShapeStroke === 'function',
 );
 check('every shape kind has a label', SHAPE_KINDS.every((k) => typeof SHAPE_LABELS[k] === 'string'));
+check('the draw modes are boxed and freeform', SHAPE_MODES[0] === 'boxed' && SHAPE_MODES[1] === 'freeform');
 
-// --- line --------------------------------------------------------------------
-const line = shapePoints('line', 10, 10, 100, 10, { snap: false });
-check('a line has 2 points', line.length === 2);
-check('a line starts at the drag origin', near(line[0].x, 10) && near(line[0].y, 10));
-check('a line ends at the drag end', near(line[1].x, 100) && near(line[1].y, 10));
+// --- boxed mode -------------------------------------------------------------
+const boxLine = shapeVertices('line', 'boxed', { box: BOX });
+check('a boxed line has 2 vertices', boxLine.length === 2);
 check(
-  'shape points carry pressure 0.5 and a timestamp',
-  line.every((p) => p.pressure === 0.5 && typeof p.t === 'number' && Number.isFinite(p.t)),
+  'a boxed line is the diagonal of the box',
+  samePoint(boxLine[0], { x: 0, y: 0 }) && samePoint(boxLine[1], { x: 100, y: 50 }),
 );
 
-// --- rect --------------------------------------------------------------------
-const rect = shapePoints('rect', 200, 200, 100, 100, { snap: false });
-check('a rect has 4 points', rect.length === 4);
-const rectXs = rect.map((p) => p.x);
-const rectYs = rect.map((p) => p.y);
-check('a rect dragged up-left still has min < max', Math.min(...rectXs) < Math.max(...rectXs));
-check('a rect dragged up-left still has min < max in y', Math.min(...rectYs) < Math.max(...rectYs));
+const boxRect = shapeVertices('rect', 'boxed', { box: BOX });
+check('a boxed rect has 4 vertices', boxRect.length === 4);
 check(
-  'a rect starts at the top-left corner',
-  near(rect[0].x, 100) && near(rect[0].y, 100),
-);
-check(
-  'a rect runs clockwise from the top-left',
-  near(rect[1].x, 200) && near(rect[1].y, 100) &&
-    near(rect[2].x, 200) && near(rect[2].y, 200) &&
-    near(rect[3].x, 100) && near(rect[3].y, 200),
+  'a boxed rect uses the corners of the box',
+  samePoint(boxRect[0], { x: 0, y: 0 }) &&
+    samePoint(boxRect[1], { x: 100, y: 0 }) &&
+    samePoint(boxRect[2], { x: 100, y: 50 }) &&
+    samePoint(boxRect[3], { x: 0, y: 50 }),
 );
 
-// --- square snapping ---------------------------------------------------------
-const sq = shapePoints('rect', 0, 0, 100, 50);
-const sqW = Math.max(...sq.map((p) => p.x)) - Math.min(...sq.map((p) => p.x));
-const sqH = Math.max(...sq.map((p) => p.y)) - Math.min(...sq.map((p) => p.y));
-check('a 100x50 rect drag snaps to 100x100', near(sqW, 100) && near(sqH, 100));
-const sqDirect = snapSquare(0, 0, 100, 50);
-check('snapSquare locks 100x50 to 100x100', near(sqDirect.x1, 100) && near(sqDirect.y1, 100));
-const sqTall = snapSquare(0, 0, 50, 100);
-check('snapSquare locks 50x100 to 100x100', near(sqTall.x1, 100) && near(sqTall.y1, 100));
-
-// --- ellipse -----------------------------------------------------------------
-const ell = shapePoints('ellipse', 10, 20, 110, 60, { snap: false });
-check('an ellipse has 48 points', ell.length === 48);
+const boxEllipse = shapeVertices('ellipse', 'boxed', { box: BOX });
+check('a boxed ellipse has 24 vertices', boxEllipse.length === 24);
 check(
-  'every ellipse point lies inside the bounding box',
-  ell.every(
-    (p) =>
-      p.x >= 10 - 1e-9 && p.x <= 110 + 1e-9 &&
-      p.y >= 20 - 1e-9 && p.y <= 60 + 1e-9,
+  'every vertex of a boxed ellipse lies inside the box',
+  boxEllipse.every(
+    (p) => p.x >= -1e-9 && p.x <= 100 + 1e-9 && p.y >= -1e-9 && p.y <= 50 + 1e-9,
   ),
 );
-const ellW = Math.max(...ell.map((p) => p.x)) - Math.min(...ell.map((p) => p.x));
-const ellH = Math.max(...ell.map((p) => p.y)) - Math.min(...ell.map((p) => p.y));
-check('the ellipse fills its bounding box', near(ellW, 100, 1e-6) && near(ellH, 40, 1e-6));
+const ellW = Math.max(...boxEllipse.map((p) => p.x)) - Math.min(...boxEllipse.map((p) => p.x));
+const ellH = Math.max(...boxEllipse.map((p) => p.y)) - Math.min(...boxEllipse.map((p) => p.y));
+check('a boxed ellipse fills its box', near(ellW, 100) && near(ellH, 50));
 
-// --- triangle ----------------------------------------------------------------
-const tri = shapePoints('triangle', 0, 0, 100, 50, { snap: false });
-check('a triangle has 3 points', tri.length === 3);
-check("a triangle's first point is the top-centre", near(tri[0].x, 50) && near(tri[0].y, 0));
+const boxTriangle = shapeVertices('triangle', 'boxed', { box: BOX });
+check('a boxed triangle has 3 vertices', boxTriangle.length === 3);
 check(
-  'a triangle closes on the bounding box corners',
-  near(tri[1].x, 0) && near(tri[1].y, 50) && near(tri[2].x, 100) && near(tri[2].y, 50),
+  'a boxed triangle uses three corners of the box',
+  boxTriangle.every((p) =>
+    (near(p.x, 0) || near(p.x, 100)) && (near(p.y, 0) || near(p.y, 50))),
 );
 
-// --- arrow -------------------------------------------------------------------
-const arr = shapePoints('arrow', 0, 0, 100, 0, { snap: false });
-check('an arrow has 5 points', arr.length === 5);
-check('an arrow starts at the origin', near(arr[0].x, 0) && near(arr[0].y, 0));
-check('the arrow tip is the drag end', near(arr[1].x, 100) && near(arr[1].y, 0));
-const barbLen = Math.hypot(arr[2].x - 100, arr[2].y - 0);
-check('an arrow barb is 10% of the shaft', near(barbLen, 10, 1e-6));
-check('an arrow barb points back along the shaft', arr[2].x < 100);
-check('the two arrow barbs are mirrored', near(arr[2].x, arr[4].x) && near(arr[2].y, -arr[4].y));
+const boxArrow = shapeVertices('arrow', 'boxed', { box: BOX });
+check('a boxed arrow has 5 vertices', boxArrow.length === 5);
+check('a boxed arrow starts at the box corner', samePoint(boxArrow[0], { x: 0, y: 0 }));
+check('a boxed arrow ends at the far corner', samePoint(boxArrow[1], { x: 100, y: 50 }));
 
-// --- angle snapping ----------------------------------------------------------
-const dragLen = Math.hypot(100, 100 * Math.tan((30 * Math.PI) / 180));
-const snapped = snapAngle(0, 0, 100, 100 * Math.tan((30 * Math.PI) / 180));
-const snapDeg = (Math.atan2(snapped.y1 - 0, snapped.x1 - 0) * 180) / Math.PI;
-check('a 30-degree drag snaps to a multiple of 45', near(((snapDeg % 45) + 45) % 45, 0, 1e-6));
-check('a 30-degree drag snaps to 45 degrees', near(snapDeg, 45, 1e-6));
-check('angle snapping keeps the drag length', near(Math.hypot(snapped.x1, snapped.y1), dragLen, 1e-6));
-const snappedLine = shapePoints('line', 0, 0, 100, 100 * Math.tan((30 * Math.PI) / 180));
-const lineDeg = (Math.atan2(snappedLine[1].y, snappedLine[1].x) * 180) / Math.PI;
-check('a snapped line points at 45 degrees', near(lineDeg, 45, 1e-6));
-const unsnappedLine = shapePoints('line', 0, 0, 100, 100 * Math.tan((30 * Math.PI) / 180), { snap: false });
+const boxCustom = shapeVertices('custom', 'boxed', { box: BOX });
+check('a boxed custom shape starts as the box corners', boxCustom.length === 4);
 check(
-  'snapping can be switched off',
-  near(unsnappedLine[1].y, 100 * Math.tan((30 * Math.PI) / 180), 1e-6),
+  'a boxed custom shape uses the corners of the box',
+  samePoint(boxCustom[0], { x: 0, y: 0 }) && samePoint(boxCustom[3], { x: 0, y: 50 }),
 );
 
-// --- grid snapping -----------------------------------------------------------
-const grid = snapToGrid(37, 44, 20);
-check('snapToGrid rounds to the nearest grid point', grid.x === 40 && grid.y === 40);
+// A box dragged the other way round still gives the same rectangle.
+const flipped = shapeVertices('rect', 'boxed', { box: { x0: 100, y0: 50, x1: 0, y1: 0 } });
+check(
+  'a reversed box gives the same rect',
+  samePoint(flipped[0], { x: 0, y: 0 }) && samePoint(flipped[2], { x: 100, y: 50 }),
+);
 
-// --- shape strokes -----------------------------------------------------------
-const rectStroke = createShapeStroke({
-  kind: 'rect', x0: 0, y0: 0, x1: 100, y1: 100, color: '#123456', width: 2,
+// --- freeform mode ----------------------------------------------------------
+const freeRectPath = [
+  { x: 10, y: 10 },
+  { x: 90, y: 12 },
+  { x: 88, y: 70 },
+  { x: 8, y: 68 },
+];
+const freeRect = shapeVertices('rect', 'freeform', { path: freeRectPath });
+check('a freeform rect has 4 vertices', freeRect.length === 4);
+check(
+  'a freeform rect keeps the points of the path, in order',
+  freeRect.every((p, i) => samePoint(p, freeRectPath[i])),
+);
+
+const freeLine = shapeVertices('line', 'freeform', {
+  path: [{ x: 0, y: 0 }, { x: 30, y: 30 }, { x: 60, y: 60 }],
 });
-check('createShapeStroke marks the shape', isShapeStroke(rectStroke));
-check('createShapeStroke sets kind', rectStroke.kind === 'shape');
-check('createShapeStroke sets shape', rectStroke.shape === 'rect');
-check('createShapeStroke defaults to freeform', rectStroke.fill === false);
-check('createShapeStroke builds the points', rectStroke.points.length === 5);
-check('a closed shape polyline includes the closing edge', rectStroke.points[4].x === rectStroke.points[0].x && rectStroke.points[4].y === rectStroke.points[0].y);
+check('a freeform line has 2 vertices', freeLine.length === 2);
 check(
-  'createShapeStroke keeps the ink fields',
-  rectStroke.color === '#123456' && rectStroke.width === 2 && rectStroke.pressureTaper === false,
+  'a freeform line runs from the start to the end of the path',
+  samePoint(freeLine[0], { x: 0, y: 0 }) && samePoint(freeLine[1], { x: 60, y: 60 }),
 );
-const boxedStroke = createShapeStroke({
-  kind: 'rect', x0: 0, y0: 0, x1: 10, y1: 10, fill: true,
-});
-check('createShapeStroke can set fill', boxedStroke.fill === true);
 
-// --- outlines ----------------------------------------------------------------
+const freeTriangle = shapeVertices('triangle', 'freeform', {
+  path: [{ x: 0, y: 0 }, { x: 50, y: 0 }, { x: 25, y: 40 }],
+});
+check('a freeform triangle has 3 vertices', freeTriangle.length === 3);
+check(
+  'a freeform triangle keeps the points of the path',
+  freeTriangle.every((p, i) => samePoint(p, [{ x: 0, y: 0 }, { x: 50, y: 0 }, { x: 25, y: 40 }][i])),
+);
+
+const freeArrow = shapeVertices('arrow', 'freeform', {
+  path: [{ x: 0, y: 0 }, { x: 100, y: 0 }],
+});
+check('a freeform arrow has 5 vertices', freeArrow.length === 5);
+check(
+  'a freeform arrow runs along the path',
+  samePoint(freeArrow[0], { x: 0, y: 0 }) && samePoint(freeArrow[1], { x: 100, y: 0 }),
+);
+
+const circle = [];
+for (let i = 0; i < 40; i += 1) {
+  const a = (i / 40) * Math.PI * 2;
+  circle.push({ x: 50 + 40 * Math.cos(a), y: 50 + 40 * Math.sin(a) });
+}
+const freeEllipse = shapeVertices('ellipse', 'freeform', { path: circle });
+check('a freeform ellipse has 24 vertices', freeEllipse.length === 24);
+check(
+  'a freeform ellipse stays inside the drawn outline',
+  freeEllipse.every((p) => Math.hypot(p.x - 50, p.y - 50) <= 40 + 1e-6),
+);
+
+const longPath = [];
+for (let i = 0; i < 30; i += 1) longPath.push({ x: i * 10, y: (i % 3) * 4 });
+const freeCustom = shapeVertices('custom', 'freeform', { path: longPath });
+check(
+  `a freeform custom shape has at most ${MAX_CUSTOM_VERTICES} vertices`,
+  freeCustom.length <= MAX_CUSTOM_VERTICES && freeCustom.length >= 3,
+);
+check(
+  'a freeform custom shape keeps the ends of the path',
+  samePoint(freeCustom[0], longPath[0]) && samePoint(freeCustom[freeCustom.length - 1], longPath[longPath.length - 1]),
+);
+
+// --- simplifyPath -----------------------------------------------------------
+const many = [];
+for (let i = 0; i < 20; i += 1) many.push({ x: i * 5, y: 0 });
+const simple = simplifyPath(many, 5);
+check('simplifyPath reduces a long path to at most N points', simple.length === 5);
+check('simplifyPath keeps the first point', samePoint(simple[0], many[0]));
+check('simplifyPath keeps the last point', samePoint(simple[4], many[19]));
+const short = simplifyPath([{ x: 1, y: 1 }, { x: 2, y: 2 }], 6);
+check('simplifyPath leaves a short path alone', short.length === 2);
+const closed = simplifyPath(
+  [{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 10 }, { x: 0, y: 10 }, { x: 0, y: 0 }],
+  4,
+);
+check('simplifyPath drops the duplicated closing point', closed.length === 4);
+
+// --- outlines ---------------------------------------------------------------
+const rectStroke = createShapeStroke({ kind: 'rect', mode: 'boxed', box: BOX, color: '#123456', width: 2 });
 const rectOutline = shapeOutline(rectStroke);
 check(
   'a rect outline is a closed loop',
@@ -199,39 +250,48 @@ check(
     rectOutline[0][0] === rectOutline[4][0] &&
     rectOutline[0][1] === rectOutline[4][1],
 );
-const ellOutline = shapeOutline(createShapeStroke({ kind: 'ellipse', x0: 0, y0: 0, x1: 100, y1: 100 }));
+const ellipseOutline = shapeOutline(createShapeStroke({ kind: 'ellipse', mode: 'boxed', box: BOX }));
 check(
   'an ellipse outline is a closed loop',
-  ellOutline.length === 49 &&
-    ellOutline[0][0] === ellOutline[ellOutline.length - 1][0] &&
-    ellOutline[0][1] === ellOutline[ellOutline.length - 1][1],
+  ellipseOutline.length === 25 &&
+    ellipseOutline[0][0] === ellipseOutline[ellipseOutline.length - 1][0] &&
+    ellipseOutline[0][1] === ellipseOutline[ellipseOutline.length - 1][1],
 );
-const triOutline = shapeOutline(createShapeStroke({ kind: 'triangle', x0: 0, y0: 0, x1: 100, y1: 100 }));
+const triangleOutline = shapeOutline(createShapeStroke({ kind: 'triangle', mode: 'boxed', box: BOX }));
 check(
   'a triangle outline is a closed loop',
-  triOutline.length === 4 &&
-    triOutline[0][0] === triOutline[3][0] &&
-    triOutline[0][1] === triOutline[3][1],
+  triangleOutline.length === 4 &&
+    triangleOutline[0][0] === triangleOutline[3][0] &&
+    triangleOutline[0][1] === triangleOutline[3][1],
 );
-const lineOutline = shapeOutline(createShapeStroke({ kind: 'line', x0: 0, y0: 0, x1: 100, y1: 0 }));
+const customOutline = shapeOutline(
+  createShapeStroke({ kind: 'custom', mode: 'boxed', box: BOX }),
+);
+check(
+  'a custom shape outline is a closed loop',
+  customOutline.length === 5 &&
+    customOutline[0][0] === customOutline[4][0] &&
+    customOutline[0][1] === customOutline[4][1],
+);
+const lineOutline = shapeOutline(createShapeStroke({ kind: 'line', mode: 'boxed', box: BOX }));
 check('a line outline stays open', lineOutline.length === 2);
-const arrowOutline = shapeOutline(createShapeStroke({ kind: 'arrow', x0: 0, y0: 0, x1: 100, y1: 0 }));
+const arrowOutline = shapeOutline(createShapeStroke({ kind: 'arrow', mode: 'boxed', box: BOX }));
 check('an arrow outline stays open', arrowOutline.length === 5);
 check('shapeOutline returns null for plain ink', shapeOutline({ points: [{ x: 0, y: 0 }] }) === null);
 
-// --- hit-testing -------------------------------------------------------------
-check('a point inside a rect hits', shapeHitTest(rectStroke, 50, 50));
+// --- hit-testing ------------------------------------------------------------
+check('a point inside a rect hits', shapeHitTest(rectStroke, 50, 25));
 check('a point outside a rect misses', !shapeHitTest(rectStroke, 150, 150));
-check('a point on the rect edge hits', shapeHitTest(rectStroke, 100, 50));
-const lineStroke = createShapeStroke({ kind: 'line', x0: 0, y0: 0, x1: 100, y1: 0 });
-check('a point near a line segment hits', shapeHitTest(lineStroke, 50, 3));
-check('a point far from a line segment misses', !shapeHitTest(lineStroke, 50, 40));
-const triStroke = createShapeStroke({ kind: 'triangle', x0: 0, y0: 0, x1: 100, y1: 100 });
-check('a point inside a triangle hits', shapeHitTest(triStroke, 50, 80));
-check('a point outside a triangle misses', !shapeHitTest(triStroke, 5, 5));
-const ellStroke = createShapeStroke({ kind: 'ellipse', x0: 0, y0: 0, x1: 100, y1: 100 });
-check('a point inside an ellipse hits', shapeHitTest(ellStroke, 50, 50));
-check('a point outside an ellipse misses', !shapeHitTest(ellStroke, 150, 50));
+check('a point on the rect edge hits', shapeHitTest(rectStroke, 100, 25));
+const lineStroke = createShapeStroke({ kind: 'line', mode: 'boxed', box: BOX });
+check('a point near a line segment hits', shapeHitTest(lineStroke, 50, 28));
+check('a point far from a line segment misses', !shapeHitTest(lineStroke, 50, 60));
+const triStroke = createShapeStroke({ kind: 'triangle', mode: 'boxed', box: BOX });
+check('a point inside a triangle hits', shapeHitTest(triStroke, 90, 40));
+check('a point outside a triangle misses', !shapeHitTest(triStroke, 5, 45));
+const ellStroke = createShapeStroke({ kind: 'ellipse', mode: 'boxed', box: BOX });
+check('a point inside an ellipse hits', shapeHitTest(ellStroke, 50, 25));
+check('a point outside an ellipse misses', !shapeHitTest(ellStroke, 150, 25));
 
 // --- rendering ---------------------------------------------------------------
 const ctx = makeCtx();
@@ -241,7 +301,7 @@ check('renderShape does not fill by default', ctx.calls.fill === 0);
 check('renderShape sets the stroke colour', ctx.strokeStyle === '#123456');
 check('renderShape sets the stroke width', ctx.lineWidth === 2);
 check('renderShape uses round joins and caps', ctx.lineJoin === 'round' && ctx.lineCap === 'round');
-check('renderShape traces the outline', ctx.calls.moveTo === 1 && ctx.calls.lineTo === 4);
+check('renderShape traces the outline once', ctx.calls.moveTo === 1 && ctx.calls.lineTo === 4);
 
 const filledCtx = makeCtx();
 renderShape(filledCtx, { ...rectStroke, fill: true });
@@ -255,5 +315,108 @@ check('renderShape dashes a dashed shape', dashedCtx.calls.setLineDash > 0 && da
 const inkCtx = makeCtx();
 renderShape(inkCtx, { points: [{ x: 0, y: 0 }], color: '#000', width: 3 });
 check('renderShape ignores plain ink', inkCtx.calls.stroke === 0);
+
+// --- shape strokes ----------------------------------------------------------
+check('createShapeStroke marks the shape', isShapeStroke(rectStroke));
+check('createShapeStroke sets kind', rectStroke.kind === 'shape');
+check('createShapeStroke sets shape', rectStroke.shape === 'rect');
+check('createShapeStroke records the draw mode', rectStroke.mode === 'boxed');
+check('createShapeStroke defaults to no fill', rectStroke.fill === false);
+check('createShapeStroke builds the points', rectStroke.points.length === 5);
+check(
+  'a closed shape polyline includes the closing edge',
+  rectStroke.points[4].x === rectStroke.points[0].x && rectStroke.points[4].y === rectStroke.points[0].y,
+);
+check(
+  'createShapeStroke keeps the ink fields',
+  rectStroke.color === '#123456' && rectStroke.width === 2 && rectStroke.pressureTaper === false,
+);
+const filledStroke = createShapeStroke({ kind: 'rect', mode: 'boxed', box: BOX, fill: true });
+check('createShapeStroke can set fill', filledStroke.fill === true);
+const freeStroke = createShapeStroke({ kind: 'rect', mode: 'freeform', path: freeRectPath });
+check('createShapeStroke can build a freeform shape', freeStroke.mode === 'freeform' && freeStroke.points.length === 5);
+check('isClosedShape knows the closed kinds', isClosedShape('rect') && isClosedShape('custom') && !isClosedShape('line'));
+
+// --- editable vertices ------------------------------------------------------
+const editable = createShapeStroke({ kind: 'rect', mode: 'boxed', box: BOX });
+const verts = vertexPositions(editable);
+check('a closed shape has one vertex per corner', verts.length === 4);
+check(
+  'the editable vertices are the corners of the box',
+  samePoint(verts[0], { x: 0, y: 0 }) && samePoint(verts[2], { x: 100, y: 50 }),
+);
+const before = vertexPositions(editable);
+setVertex(editable, 1, 40, 20);
+const after = vertexPositions(editable);
+check('setVertex moves the vertex it is given', samePoint(after[1], { x: 40, y: 20 }));
+check('setVertex leaves the other vertices alone', samePoint(after[0], before[0]) && samePoint(after[2], before[2]) && samePoint(after[3], before[3]));
+check(
+  'setVertex keeps the closing point with the first vertex',
+  editable.points[4].x === editable.points[0].x && editable.points[4].y === editable.points[0].y,
+);
+setVertex(editable, 0, 5, 6);
+check(
+  'setVertex moves the closing point with the first vertex',
+  editable.points[4].x === 5 && editable.points[4].y === 6,
+);
+check('setVertex refuses an index that is out of range', setVertex(editable, 99, 0, 0) === false);
+
+// --- the square preset ------------------------------------------------------
+const square = createShapeStroke({ kind: 'rect', mode: 'boxed', box: { x0: 0, y0: 0, x1: 100, y1: 50 } });
+check('toSquare changes a rectangle', toSquare(square) === true);
+const sqVerts = vertexPositions(square);
+const sqW = Math.max(...sqVerts.map((p) => p.x)) - Math.min(...sqVerts.map((p) => p.x));
+const sqH = Math.max(...sqVerts.map((p) => p.y)) - Math.min(...sqVerts.map((p) => p.y));
+check('a 100x50 rect becomes a 100x100 square', near(sqW, 100) && near(sqH, 100));
+check(
+  'the square keeps the centre of the rectangle',
+  near((Math.min(...sqVerts.map((p) => p.x)) + Math.max(...sqVerts.map((p) => p.x))) / 2, 50) &&
+    near((Math.min(...sqVerts.map((p) => p.y)) + Math.max(...sqVerts.map((p) => p.y))) / 2, 25),
+);
+const alreadySquare = createShapeStroke({ kind: 'rect', mode: 'boxed', box: { x0: 0, y0: 0, x1: 80, y1: 80 } });
+check('toSquare reports that an unchanged shape did not change', toSquare(alreadySquare) === false);
+
+const tri = createShapeStroke({ kind: 'triangle', mode: 'boxed', box: { x0: 0, y0: 0, x1: 90, y1: 60 } });
+const triBefore = vertexPositions(tri);
+const triCx = triBefore.reduce((s, p) => s + p.x, 0) / 3;
+const triCy = triBefore.reduce((s, p) => s + p.y, 0) / 3;
+check('toSquare changes a triangle', toSquare(tri) === true);
+const triAfter = vertexPositions(tri);
+check('the regular triangle has the same vertex count', triAfter.length === 3);
+const triR = triAfter.map((p) => Math.hypot(p.x - triCx, p.y - triCy));
+check('the regular triangle keeps the centroid', near(triCx, triAfter.reduce((s, p) => s + p.x, 0) / 3) && near(triCy, triAfter.reduce((s, p) => s + p.y, 0) / 3));
+check('the regular triangle has three equal radii', near(triR[0], triR[1]) && near(triR[1], triR[2]));
+const triAngles = triAfter.map((p) => Math.atan2(p.y - triCy, p.x - triCx)).sort((a, b) => a - b);
+check('the regular triangle is spread evenly', near((triAngles[1] - triAngles[0]) * 180 / Math.PI, 120, 1e-6));
+
+// --- vertex snapping --------------------------------------------------------
+const neighbour = createShapeStroke({ kind: 'rect', mode: 'boxed', box: { x0: 100, y0: 100, x1: 200, y1: 200 } });
+const dragged = createShapeStroke({ kind: 'rect', mode: 'boxed', box: { x0: 0, y0: 0, x1: 50, y1: 50 } });
+
+const snappedVertex = snapVertex(dragged, 0, 103, 101, { others: [neighbour] });
+check('a nearby vertex is snapped onto exactly', snappedVertex.snapped === true);
+check('the snapped vertex is the neighbour corner', samePoint(snappedVertex, { x: 100, y: 100 }));
+check('the snap target says it is a vertex', snappedVertex.target?.kind === 'vertex');
+check('the snap target names the other shape', snappedVertex.target?.id === neighbour.id);
+
+const snappedEdge = snapVertex(dragged, 0, 150, 104, { others: [neighbour] });
+check('a nearby edge is snapped onto', snappedEdge.snapped === true);
+check('the snapped edge point is the closest point on the edge', samePoint(snappedEdge, { x: 150, y: 100 }));
+check('the snap target says it is an edge', snappedEdge.target?.kind === 'edge');
+
+const notSnapped = snapVertex(dragged, 0, 400, 400, { others: [neighbour] });
+check('a point far from everything is left alone', notSnapped.snapped === false);
+check('the unsnapped point keeps its coordinates', notSnapped.x === 400 && notSnapped.y === 400);
+check('the unsnapped point has no target', notSnapped.target === null);
+
+const selfSnap = snapVertex(dragged, 0, 1, 1, { others: [dragged] });
+check('a shape is never snapped to itself', selfSnap.snapped === false);
+const toleranced = snapVertex(dragged, 0, 150, 104, { others: [neighbour], tolerance: 1 });
+check('the tolerance can be tightened', toleranced.snapped === false);
+
+// --- the vertex editor imports in Node --------------------------------------
+const editor = await import(pathToFileURL(`${SRC}/ui/shape-editor.js`).href);
+check('the shape editor exports buildShapeEditor', typeof editor.buildShapeEditor === 'function');
+check('the shape editor does not touch the document at import time', typeof document === 'undefined');
 
 console.log(`ALL ${checks} CHECKS PASSED`);

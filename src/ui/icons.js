@@ -84,8 +84,22 @@ export const ICONS = {
       P('M7.4 16.6 L4.9 19.1'),
     ],
   },
+  // A freeform polygon: the "custom" shape the user edits themselves.
+  shapeCustom: {
+    paths: [P('M12 3 L20 8 L17.5 18 L6.5 18 L4 8 Z')],
+  },
   // A capital T: the text tool.
   text: { paths: [P('M5 6 L19 6'), P('M12 6 L12 19')] },
+  // A four-way move arrow: a finger that pans the page.
+  pan: {
+    paths: [
+      P('M12 4 L12 20 M4 12 L20 12'),
+      P('M12 4 L9.6 6.4 M12 4 L14.4 6.4'),
+      P('M12 20 L9.6 17.6 M12 20 L14.4 17.6'),
+      P('M4 12 L6.4 9.6 M4 12 L6.4 14.4'),
+      P('M20 12 L17.6 9.6 M20 12 L17.6 14.4'),
+    ],
+  },
   // A four-pointed star, like the app's own mark: the "Ask AI" button.
   sparkle: {
     paths: [P('M12 2.5 L13.9 9.1 L20.5 11 L13.9 12.9 L12 19.5 L10.1 12.9 L3.5 11 L10.1 9.1 Z')],

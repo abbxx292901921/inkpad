@@ -32,6 +32,7 @@ import { buildLibrary } from './ui/library.js';
 import { createPopover, el } from './ui/popover.js';
 import {
   fingerDrawingEnabled,
+  fingerAction,
   toggleFingerDrawing,
   resetFingerDrawing,
   subscribeInput,
@@ -43,7 +44,9 @@ import { downloadNoteAsPng, printNote, pageRegionToDataUrl } from './export.js';
 import { registerServiceWorker } from './sw-register.js';
 import { buildAskAi } from './ui/ask-ai.js';
 import { buildTextInput } from './ui/text-input.js';
-import { createText, isTextObject, syncTextAnchor } from './text.js';
+import { buildShapeEditor } from './ui/shape-editor.js';
+import { createText, isTextObject, syncTextAnchor, fitTextSize } from './text.js';
+import { isShapeStroke, setVertex, toSquare } from './shapes.js';
 import { buildSettings } from './ui/settings.js';
 import {
   loadPresets,
@@ -193,14 +196,19 @@ const surface = createDrawingSurface(canvas, viewport, {
     selected = strokesInPolygon(page.strokes, path);
     syncSelection();
   },
-  onTextTap: ({ x, y }) => {
-    pendingTextAt = { x, y };
-    const s = pageToScreen(x, y, viewport);
+  onTextBox: ({ x, y, w, h }) => {
+    // A tap with no drag gets a default box, so the tool still works.
+    const box = { x, y, w: w || 260, h: h || 64 };
+    pendingTextBox = box;
+    const s = pageToScreen(box.x, box.y, viewport);
     const rect = canvas.getBoundingClientRect();
     const tool = getCurrentTool();
+    const zoom = viewport.zoom;
     textInput.openAt(rect.left + s.x, rect.top + s.y, {
       color: tool.options.color,
-      size: Math.max(16, (tool.options.size ?? 28) * viewport.zoom),
+      size: Math.max(16, (tool.options.size ?? 28) * zoom),
+      width: box.w * zoom,
+      height: box.h * zoom,
     });
   },
   debug: (text) => {
@@ -425,7 +433,7 @@ function buildMoreMenu() {
 
   const fingerItem = el('button', 'menu-item');
   fingerItem.type = 'button';
-  fingerItem.appendChild(el('span', 'menu-label', 'Finger drawing'));
+  fingerItem.appendChild(el('span', 'menu-label', 'Finger'));
   const fingerState = el('span', 'menu-value');
   fingerItem.appendChild(fingerState);
   fingerItem.addEventListener('click', () => {
@@ -434,6 +442,7 @@ function buildMoreMenu() {
     buildMoreMenu();
   });
   morePopover.el.appendChild(fingerItem);
+  fingerState.textContent = { draw: 'Draws', pan: 'Pans', none: 'Ignored' }[fingerAction()];
 
   const autoItem = el('button', 'menu-item');
   autoItem.type = 'button';
@@ -583,7 +592,10 @@ const toolbar = buildToolbar(toolbarEl, {
   quickColors: QUICK_COLORS,
   onSelectTool: (id) => {
     if (id === 'shape') {
-      // The shape button opens the shape picker, like the reference.
+      // Tapping the shape button selects the shape tool AND opens the
+      // picker, so you can pick a shape or just draw the default one.
+      setCurrentTool('shape');
+      syncUI();
       openShapeMenu(toolbarEl.querySelector('[data-tool="shape"]') || toolbarEl);
       return;
     }
@@ -807,6 +819,7 @@ let rulerVisible = false;
 function syncSelection() {
   const b = selected.length > 0 ? boundsOf(selected) : null;
   selection.update({ bounds: b, visible: Boolean(b) });
+  syncShapeEditor();
 }
 
 function clearSelection() {
@@ -823,8 +836,8 @@ const shapeMenu = buildShapeMenu({
     shapeMenu.close();
     syncUI();
   },
-  onSelectFill: (fill) => {
-    setToolOptions('shape', { fill });
+  onSelectMode: (mode) => {
+    setToolOptions('shape', { mode });
     syncUI();
   },
 });
@@ -834,7 +847,7 @@ function openShapeMenu(anchor) {
   const tool = getCurrentTool();
   shapeMenu.update({
     shape: tool.options.shape ?? 'rect',
-    fill: tool.options.fill ?? 'freeform',
+    mode: tool.options.mode ?? 'boxed',
   });
   for (const p of ALL_POPOVERS) p.close();
   shapeMenu.open(anchor);
@@ -1011,40 +1024,98 @@ async function sendToAi(question) {
   syncAi();
 }
 
+// --- shape editor ----------------------------------------------------------
+// When exactly one shape is selected, its vertices become draggable. A vertex
+// snaps to a nearby vertex or edge of another shape.
+const shapeEditor = buildShapeEditor({
+  getViewport: () => viewport,
+  getCanvasRect: () => canvas.getBoundingClientRect(),
+  onChange: ({ stroke, index, x, y }) => {
+    beginTransform();
+    setVertex(stroke, index, x, y);
+    surface.redraw();
+    syncShapeEditor();
+  },
+  onCommit: () => {
+    workspace.markDirty();
+  },
+  onSquare: (stroke) => {
+    beginTransform();
+    if (toSquare(stroke)) {
+      surface.redraw();
+      syncShapeEditor();
+    }
+  },
+  onDelete: (stroke) => {
+    const page = workspace.page;
+    if (!page) return;
+    const removed = removeStrokesById(page.strokes, [stroke.id]);
+    if (removed.length === 0) return;
+    history.commit(deleteEntry(removed));
+    selected = [];
+    workspace.markDirty();
+    surface.redraw();
+    syncSelection();
+    syncShapeEditor();
+  },
+});
+document.body.appendChild(shapeEditor.element);
+
+function syncShapeEditor() {
+  const page = workspace.page;
+  const shape = selected.length === 1 && isShapeStroke(selected[0]) ? selected[0] : null;
+  if (!shape || !page) {
+    shapeEditor.setVisible(false);
+    return;
+  }
+  const others = page.strokes.filter((s) => s !== shape);
+  // The editor must be VISIBLE before it positions its handles, or it
+  // bails out of update() and never creates them.
+  shapeEditor.setVisible(true);
+  shapeEditor.update({ stroke: shape, others, visible: true });
+}
+
 // --- text tool -------------------------------------------------------------
 // Tap with the text tool and a caret appears where you tapped. The typed
 // text becomes a real object on the page, so it can be selected, moved,
 // saved and exported like any other ink.
-let pendingTextAt = null;
+let pendingTextBox = null;
+
+// A canvas for measuring text, so the font can be fitted to its box.
+const measureCanvas = document.createElement('canvas');
+const measureCtx = measureCanvas.getContext('2d');
 
 const textInput = buildTextInput({
   onCommit: (text) => {
     const page = workspace.page;
-    const at = pendingTextAt;
-    pendingTextAt = null;
-    if (!page || !at || !text) {
+    const box = pendingTextBox;
+    pendingTextBox = null;
+    if (!page || !box || !text) {
       setCurrentTool('pen');
       syncUI();
       return;
     }
     const tool = getCurrentTool();
     const obj = createText({
-      x: at.x,
-      y: at.y,
+      x: box.x,
+      y: box.y,
+      w: box.w,
+      h: box.h,
       text,
       size: tool.options.size ?? 28,
       color: tool.options.color,
     });
+    // Shrink the font until the text fits the box the user drew.
+    if (obj.w > 0 && obj.h > 0) obj.size = fitTextSize(measureCtx, obj);
     history.commit(addEntry(obj, page.strokes.length));
     page.strokes.push(obj);
     workspace.markDirty();
     surface.redraw();
-    syncUI();
     setCurrentTool('pen');
     syncUI();
   },
   onCancel: () => {
-    pendingTextAt = null;
+    pendingTextBox = null;
     setCurrentTool('pen');
     syncUI();
   },
@@ -1144,6 +1215,7 @@ function syncUI() {
     canUndo: history.canUndo,
     canRedo: history.canRedo,
     fingerDrawing: fingerDrawingEnabled(),
+    fingerAction: fingerAction(),
     pageIndex: workspace.pageIndex,
     pageCount: workspace.pages.length,
     showColors: tool.kind === 'ink' || tool.kind === 'shape' || tool.kind === 'text',

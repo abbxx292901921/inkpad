@@ -80,12 +80,14 @@ export function boundsOf(strokes) {
   };
 }
 
-// The box of a text object, in page units.
+// The box of a text object, in page units. The DRAWN box wins: that is the
+// rectangle the user dragged, and the selection should follow it rather than
+// hugging the glyphs.
 function textBoxOf(s) {
   const anchor = s.points?.[0] ?? { x: s.x, y: s.y };
-  const w = s.measured?.width ?? s.size ?? 0;
-  const h = s.measured?.height ?? s.size ?? 0;
   if (!Number.isFinite(anchor?.x)) return null;
+  const w = s.w > 0 ? s.w : s.measured?.width ?? s.size ?? 0;
+  const h = s.h > 0 ? s.h : s.measured?.height ?? s.size ?? 0;
   return {
     minX: anchor.x,
     minY: anchor.y,
