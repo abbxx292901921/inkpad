@@ -778,6 +778,10 @@ export function createDrawingSurface(canvas, viewport, hooks, options = {}) {
       const draft = buildShape(entry.shape, tool);
       withPage(entry.rect, (c2) => renderShape(c2, draft));
     } else if (entry.selecting) {
+      // Clear the previous preview first: the marquee/lasso is drawn straight
+      // onto the ink canvas, so without a repaint every pointermove would
+      // leave its dashed rectangle behind (a trail of boxes).
+      repaintAll();
       if (entry.selectBox) {
         // Boxed selection: draw the rectangle the user is dragging.
         const p = entry.path[entry.path.length - 1];
@@ -871,6 +875,9 @@ export function createDrawingSurface(canvas, viewport, hooks, options = {}) {
       return;
     }
     if (entry.selecting) {
+      // Drop the dashed marquee/lasso preview from the ink canvas. The
+      // selection overlay is DOM, so the canvas must not keep the gesture.
+      repaintAll();
       if (entry.selectBox) {
         const b = normalizedBox(entry.box);
         // A click with nothing dragged is a deselect, not an empty box.

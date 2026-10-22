@@ -436,8 +436,8 @@ strokePopover.el.appendChild(strokePanel.el);
 // The document menu. Page-level actions live in the page sidebar; this card is
 // about exporting, printing, the sheet template, the zoom presets and the
 // note's identity.
-function menuRow(label, value, onClick, { disabled = false, sub = false } = {}) {
-  const b = el('button', `menu-item ${sub ? 'menu-item-sub' : ''}`.trim());
+function menuRow(label, value, onClick, { disabled = false, sub = false, danger = false } = {}) {
+  const b = el('button', `menu-item ${sub ? 'menu-item-sub' : ''} ${danger ? 'menu-item-danger' : ''}`.trim());
   b.type = 'button';
   b.appendChild(el('span', 'menu-label', label));
   if (value) b.appendChild(el('span', 'menu-value', value));
@@ -553,6 +553,14 @@ function buildMoreMenu() {
     morePopover.close();
     setDocumentZoom(1);
   }, { sub: true }));
+  // The ruler is a drafting aid, so its toggle lives with the view presets
+  // rather than in a separate "Input" section.
+  morePopover.el.appendChild(menuRow('Ruler', rulerVisible ? 'On' : 'Off', () => {
+    rulerVisible = !rulerVisible;
+    ruler.setVisible(rulerVisible);
+    if (rulerVisible) ruler.update();
+    buildMoreMenu();
+  }, { sub: true }));
 
   // --- note info ----------------------------------------------------------
   morePopover.el.appendChild(el('div', 'menu-head', 'Note info'));
@@ -572,6 +580,30 @@ function buildMoreMenu() {
       },
     });
   }));
+  // The folder and delete actions belong with the note, not with the page.
+  // The page sidebar handles the sheet; these are the only ways out of a note.
+  morePopover.el.appendChild(menuRow('Move to a folder', null, () => {
+    morePopover.close();
+    openFolderPicker();
+  }));
+  morePopover.el.appendChild(menuRow('Delete this note', null, () => {
+    morePopover.close();
+    openTextPrompt({
+      title: 'Delete this note?',
+      placeholder: 'Type DELETE to confirm',
+      onSubmit: (text) => {
+        if (text.toUpperCase() !== 'DELETE') {
+          toast('Not deleted - type DELETE to confirm.');
+          return;
+        }
+        const id = workspace.current.id;
+        workspace.deleteNote(id).then(() => {
+          toast('Note deleted.');
+          showScreen('library');
+        });
+      },
+    });
+  }, { danger: true }));
 }
 
 // --- file import -----------------------------------------------------------
@@ -800,6 +832,11 @@ const toolbar = buildToolbar(toolbarEl, {
     syncUI();
   },
   onAskAi: (anchor) => {
+    // The Ask AI card is a popover too: opening it dismisses the colour,
+    // stroke and document cards, and closes the page sidebar, so nothing
+    // stacks on top of the answer.
+    for (const p of ALL_POPOVERS) p.close();
+    pagesPanel.close();
     syncAi();
     askAiPopover.open(anchor);
     askAi.focus();
@@ -992,6 +1029,12 @@ function togglePagesPanel() {
     pagesPanel.close();
     return;
   }
+  // One layer of chrome at a time: the panel is a sheet, not a popover, but
+  // it still has to dismiss anything floating over the canvas.
+  for (const p of ALL_POPOVERS) p.close();
+  askAiPopover.close();
+  selectMenu.close();
+  shapeMenu.close();
   syncPagesPanel();
   pagesPanel.open();
 }
@@ -1749,9 +1792,19 @@ function positionNoteTitle() {
   // strictly above it would be clipped. Keep it in that margin while the page
   // top is on screen; once the page scrolls away the title scrolls with it.
   if (s.y >= 0 && top < 2) top = 2;
-  titleEl.style.left = `${Math.round(s.x)}px`;
+  // On a narrow screen the page's left edge is under the back pill, so the
+  // title would be hidden behind it. Start after the pill instead.
+  let left = Math.round(s.x);
+  const back = document.querySelector('.pill-back');
+  if (back) {
+    const br = back.getBoundingClientRect();
+    if (br.width > 0 && top < br.bottom && top + 22 > br.top) {
+      left = Math.max(left, Math.round(br.right) + 12);
+    }
+  }
+  titleEl.style.left = `${left}px`;
   titleEl.style.top = `${top}px`;
-  titleEl.style.width = `${Math.max(80, Math.round(rect.w * viewport.zoom))}px`;
+  titleEl.style.width = `${Math.max(80, Math.min(Math.round(rect.w * viewport.zoom), window.innerWidth - left - 8))}px`;
   titleEl.hidden = false;
 }
 
@@ -1773,6 +1826,9 @@ function syncTextChrome() {
     screen === 'editor' &&
     (getCurrentTool().kind === 'text' || selectedTextObjects().length > 0);
   if (textBar) textBar.update({ ...textFormatState(), visible });
+  // The page navigator and the text bar both live at the bottom centre.
+  // Lift the navigator while the bar is up so the two never overlap.
+  document.body.classList.toggle('text-bar-on', visible);
   positionNoteTitle();
 }
 

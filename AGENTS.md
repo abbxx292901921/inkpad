@@ -64,8 +64,14 @@ Regenerate the service worker's precache list after adding a file:
 - `src/text.js` — text objects. A text object is a stroke-like object with
   `kind: 'text'` and a BOX (`x, y, w, h`): the text tool drags out a
   rectangle and the text is typed inside it, wrapped to the box, with the
-  font size fitted to it.
+  font size fitted to it. Rich fields live on the object: `family`, `size`,
+  `bold`, `italic`, `underline`, `align` (left/center/right) and `list`
+  (none/bullet/number). `measured` is a memo of the wrapped lines; set it to
+  `null` after changing any field so the next paint re-wraps. Font families
+  are SYSTEM stacks (`TEXT_FONT_FAMILIES`) — no webfont is ever fetched.
 - `src/transform.js` — bounds, move/scale/rotate maths for the selection.
+  `strokeBounds()` understands text boxes, so `strokesInRect` and
+  `strokesInPolygon` select text like any other object.
 - `src/tools.js` — tool registry: pen, marker, pencil, shape, select, eraser.
   Per-tool options (`{ color, width, opacity, lineStyle, pressureTaper }` for
   ink, `{ shape, mode, fill }` for shapes, `{ mode: 'freeform'|'boxed' }` for
@@ -84,9 +90,12 @@ Regenerate the service worker's precache list after adding a file:
 - `src/ui/` — the UI layer. `icons.js` (inline SVG icon set), `popover.js`
   (floating panel primitive + colour wheel), `toolbar.js` (the pill + island),
   `palette.js` (the "Colors" card), `stroke-panel.js` (the "Stroke" card),
-  `shape-menu.js` (the shape picker), `selection.js` (the transform box),
+  `shape-menu.js` (the shape picker), `select-menu.js` (the lasso/boxed
+  picker), `selection.js` (the transform box + Duplicate/Delete row),
   `shape-editor.js` (the draggable vertex handles),
-  `library.js` (the notes screen), `ruler.js` + `rotation-dial.js`,
+  `library.js` (the notes screen), `pages-panel.js` (the page sidebar:
+  thumbnails, search, add/duplicate/delete/clear), `text-bar.js` (the rich
+  text formatting bar), `ruler.js` + `rotation-dial.js`,
   `settings.js` (the AI providers sheet), `ask-ai.js` (the Ask AI panel),
   `text-input.js` (the on-canvas text field), `prompt.js` (text and list
   prompts).
@@ -97,12 +106,12 @@ Regenerate the service worker's precache list after adding a file:
   used. The key lives in the worker's bindings, never in the app. See
   `worker/README.md`.
 - `src/ai/` — the AI layer: `providers.js`, `client.js`, `presets.js`,
-  `models.js`. See "AI providers" below.
+  `models.js`, `annotate.js`. See "AI providers" below.
 - `src/coord.js` — the ONLY screen<->page conversion. Nothing else touches zoom/pan/dpr.
 - `sw.js` — the service worker (classic script, at the repo root).
 - `tools/gen-precache.mjs` — regenerates the service worker's precache list.
 - `tests/` — the test suite. Plain Node scripts, no framework, no
-  dependencies: `node tests/run-all.mjs` runs all sixteen suites (1017 checks).
+  dependencies: `node tests/run-all.mjs` runs all eighteen suites (1212 checks).
   Every suite prints `ALL N CHECKS PASSED` and exits non-zero on the first
   failure, so they work in CI as-is.
 - `design/notability-ui-spec.md` — the Notability UI rebuild spec, transcribed
@@ -125,6 +134,22 @@ Regenerate the service worker's precache list after adding a file:
   your homework and writing on top of it is the normal case.
 - A layer is placed at the visible area of the ACTIVE page at import time,
   contain-fitted. A layer with no rect falls back to being fitted to its page.
+
+## Selection and rich text (phase B)
+- The select tool has two DRAW modes, picked in `select-menu.js`:
+  `freeform` (the lasso outline you draw, the default) and `boxed` (a
+  marquee rectangle). Both select STROKES and TEXT OBJECTS.
+- A selection owns a transform box (`ui/selection.js`) with move, scale and
+  rotate handles plus a Duplicate / Delete action row. All transform maths
+  are in `src/transform.js`; the box's `bounds` stay page-local so a
+  selection survives panning and zooming.
+- Text objects are stroked, selected and moved like ink because their box is
+  their bounds (`strokeBounds()`). The rich formatting bar (`ui/text-bar.js`)
+  is visible while the text tool is active OR text objects are selected, and
+  patches the objects in place (`measured = null` forces a re-wrap).
+- The bar and the page nav both live at the bottom; `syncTextChrome()` adds
+  `body.text-bar-on` so CSS lifts `#bottomnav` above the bar instead of
+  stacking the two.
 
 ## Multi-page document (phase A contracts)
 The editor is ONE scrollable document: pages stacked vertically on a table.
@@ -183,8 +208,20 @@ NEVER rotates between providers on its own, and never retries.
   requestTemplate, responseTextPath }`. Pure config, no runtime state.
 - `models.js` — best-effort model list fetch; failure is non-fatal (the user
   types the model name instead).
+- `annotate.js` — the AI annotation contract: `annotationPrompt()` asks for
+  JSON on a 0-1000 grid, `parseAnnotations()` validates it (max 12,
+  types rect/ellipse/arrow/callout, labels capped at 80 chars).
 - `src/ui/settings.js` — the provider settings sheet. `src/ui/ask-ai.js` — the
   "Ask AI" panel (the sparkle button in the right pill).
+
+**AI annotations.** The Annotate button sends a JPEG of the page (or of the
+selection) plus a system prompt; the reply is parsed into page objects: rect
+/ellipse/arrow become boxed shape strokes and a callout becomes a text
+object, all in `AI_ANNOTATION_COLOR`. Coordinates are multiplied by the
+page's own `w/h`, so the same answer lands correctly on an A4 sheet and on a
+PDF page of a different aspect ratio. The whole batch is ONE history entry,
+so a single Undo removes it. A model that ignores the JSON contract yields
+zero objects and an error in the panel — never a half-applied batch.
 
 **CORS IS THE REAL LIMIT.** Most hosted provider APIs send no
 `Access-Control-Allow-Origin`, so a browser cannot call them with a key. The
@@ -392,6 +429,11 @@ Rules:
   worker (phase E), exempt it from Safari's 7-day storage eviction.
 
 ## Known issues
+- (phase Z) A committed text object can be re-styled (select it, the text bar
+  patches `family`/`size`/weight/align/list) but its CONTENT cannot be
+  re-edited: there is no tap-to-reopen on a text object yet.
+- (phase Z) The pages panel adds, duplicates, deletes and clears pages, but
+  pages cannot be reordered by dragging a thumbnail.
 - (phase C) The library's "Record a lecture", "Find a template" and Gallery
   are placeholders. The bell and the "Daily Brain Break" card are decoration.
 - (phase C) Audio recording and templates are not built.

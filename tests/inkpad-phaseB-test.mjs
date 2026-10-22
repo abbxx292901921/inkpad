@@ -237,6 +237,7 @@ ok(getToolOptions('shape').mode === 'boxed', 'shape tool default draw mode');
 ok(getToolOptions('shape').fill === false, 'shape tool is not filled by default');
 ok(getToolOptions('shape').pressureTaper === false, 'shape has a constant width');
 ok(getTool('select').kind === 'select', 'select tool is a select tool');
+ok(getToolOptions('select').mode === 'freeform', 'select tool defaults to the lasso, not a marquee');
 ok(getTool('shape').kind === 'shape', 'shape tool is a shape tool');
 ok(getTool('text').kind === 'text', 'text tool is a text tool');
 ok(getToolOptions('text').size === 28, 'text tool default size');

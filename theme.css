@@ -152,6 +152,12 @@ textarea,
   display: flex;
   justify-content: center;
   pointer-events: none;
+  transition: bottom 160ms ease;
+}
+
+/* The text bar owns the bottom centre while it is visible. */
+.text-bar-on .bottomnav {
+  bottom: calc(70px + env(safe-area-inset-bottom));
 }
 
 /* The pill primitive is absolutely positioned for the top bar; inside the
@@ -651,6 +657,11 @@ button,
 .pop-menu {
   min-width: 220px;
   padding: 8px;
+  /* The menu is tall (export, share, template, view, note). On a landscape
+     iPad it must scroll rather than run off the bottom of the screen. */
+  max-height: calc(100vh - 76px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .menu-head {
