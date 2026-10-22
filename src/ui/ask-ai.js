@@ -67,12 +67,13 @@ export function buildAskAi({ onSubmit, onClose, onOpenSettings } = {}) {
   const row = el('div', 'ai-row');
   const sendBtn = el('button', 'ai-btn ai-btn-primary', 'Send');
   sendBtn.type = 'button';
-  sendBtn.addEventListener('click', () => {
-    const text = prompt.value.trim();
-    if (!text) return;
-    if (onSubmit) onSubmit(text);
-  });
+  sendBtn.addEventListener('click', () => submit(false));
   row.appendChild(sendBtn);
+
+  const annotateBtn = el('button', 'ai-btn', 'Annotate');
+  annotateBtn.type = 'button';
+  annotateBtn.addEventListener('click', () => submit(true));
+  row.appendChild(annotateBtn);
 
   const cancelBtn = el('button', 'ai-btn', 'Close');
   cancelBtn.type = 'button';
@@ -84,6 +85,10 @@ export function buildAskAi({ onSubmit, onClose, onOpenSettings } = {}) {
   error.setAttribute('role', 'alert');
   form.appendChild(error);
 
+  const confirm = el('div', 'ai-hint');
+  confirm.setAttribute('role', 'status');
+  form.appendChild(confirm);
+
   const answerWrap = el('div', 'ai-answer-wrap');
   const answerLabel = el('div', 'ai-label', 'Answer');
   const answer = el('div', 'ai-answer');
@@ -94,17 +99,17 @@ export function buildAskAi({ onSubmit, onClose, onOpenSettings } = {}) {
   body.appendChild(form);
   root.appendChild(body);
 
-  function submit() {
+  function submit(annotate) {
     const text = prompt.value.trim();
     if (!text) return;
-    if (onSubmit) onSubmit(text);
+    if (onSubmit) onSubmit(text, annotate ? { annotate: true } : undefined);
   }
 
   prompt.addEventListener('keydown', (e) => {
     e.stopPropagation();
     if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
       e.preventDefault();
-      submit();
+      submit(false);
     }
   });
 
@@ -131,6 +136,10 @@ export function buildAskAi({ onSubmit, onClose, onOpenSettings } = {}) {
       }
       sendBtn.disabled = !!state.busy;
       sendBtn.textContent = state.busy ? 'Thinking…' : 'Send';
+      annotateBtn.disabled = !!state.busy;
+      const added = Number.isFinite(state.annotating) ? state.annotating : 0;
+      confirm.textContent = added > 0 ? `Added ${added} annotations — undo removes them.` : '';
+      confirm.hidden = added <= 0;
       error.textContent = state.error || '';
       error.hidden = !state.error;
       answer.textContent = state.answer || '';

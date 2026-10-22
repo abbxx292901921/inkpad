@@ -148,22 +148,25 @@ function starter(id, label, kind, endpoint, modelsUrl, model, auth, vision) {
 }
 
 // Free or cheap providers with their REAL endpoints and auth styles, so the
-// user only has to paste a key.
+// user only has to paste a key. `vision` mirrors the kind's supportsVision:
+// every OpenAI-compatible server CAN carry an image part, even when the
+// starter model happens to be text-only. Sending an image is the user's call,
+// and the settings sheet can turn it off per preset.
 export function defaultPresets() {
   return [
     starter('groq', 'Groq', 'openai', 'https://api.groq.com/openai/v1',
-      'https://api.groq.com/openai/v1/models', 'llama-3.3-70b-versatile', 'bearer', false),
+      'https://api.groq.com/openai/v1/models', 'llama-3.3-70b-versatile', 'bearer', true),
     starter('openrouter', 'OpenRouter', 'openai', 'https://openrouter.ai/api/v1',
-      'https://openrouter.ai/api/v1/models', 'google/gemini-2.0-flash-exp:free', 'bearer', false),
+      'https://openrouter.ai/api/v1/models', 'google/gemini-2.0-flash-exp:free', 'bearer', true),
     starter('google-ai-studio', 'Google AI Studio', 'gemini-generate',
       'https://generativelanguage.googleapis.com/v1beta/models',
       'https://generativelanguage.googleapis.com/v1beta/models', 'gemini-2.0-flash', 'x-goog-api-key', true),
     starter('anthropic', 'Anthropic', 'anthropic', 'https://api.anthropic.com',
       'https://api.anthropic.com/v1/models', 'claude-sonnet-4-20250514', 'x-api-key', true),
     starter('ollama', 'Ollama (local)', 'openai', 'http://localhost:11434/v1',
-      'http://localhost:11434/v1/models', 'llama3.2', 'none', false),
+      'http://localhost:11434/v1/models', 'llama3.2', 'none', true),
     starter('lm-studio', 'LM Studio (local)', 'openai', 'http://localhost:1234/v1',
-      'http://localhost:1234/v1/models', 'local-model', 'none', false),
+      'http://localhost:1234/v1/models', 'local-model', 'none', true),
     starter('custom-raw', 'Custom (raw)', 'raw', '', '', '', 'bearer', false),
   ];
 }

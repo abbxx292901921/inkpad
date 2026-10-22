@@ -48,7 +48,7 @@ import { buildAskAi } from './ui/ask-ai.js';
 import { buildTextInput } from './ui/text-input.js';
 import { buildShapeEditor } from './ui/shape-editor.js';
 import { createText, isTextObject, syncTextAnchor, fitTextSize } from './text.js';
-import { isShapeStroke, setVertex, toSquare } from './shapes.js';
+import { isShapeStroke, setVertex, toSquare, createShapeStroke } from './shapes.js';
 import { buildSettings } from './ui/settings.js';
 import {
   loadPresets,
@@ -60,6 +60,7 @@ import {
   getPreset,
 } from './ai/presets.js';
 import { callProvider, describeError } from './ai/client.js';
+import { annotationPrompt, parseAnnotations } from './ai/annotate.js';
 import { fetchModels } from './ai/models.js';
 import { describeKind, PROVIDER_KINDS } from './ai/providers.js';
 import { buildShapeMenu } from './ui/shape-menu.js';
@@ -1310,7 +1311,7 @@ const settings = buildSettings({
 document.body.appendChild(settings.element);
 
 const askAi = buildAskAi({
-  onSubmit: (question) => sendToAi(question),
+  onSubmit: (question, options) => sendToAi(question, options),
   onClose: () => askAiPopover.close(),
   onOpenSettings: () => {
     askAiPopover.close();
@@ -1350,18 +1351,84 @@ function syncAi() {
   askAi.update(aiState);
 }
 
-// The page (or the selection) as an image, for a provider that can read
-// images. The selection is cropped to its bounds, so the AI sees the ink the
-// user actually highlighted.
+// The FULL page as a JPEG. Annotations come back on a page-normalized grid,
+// so the model must see the whole sheet, never a cropped selection. The
+// render is sized to the vision budget: no edge over 1568px.
+const AI_IMAGE_MAX_EDGE = 1568;
+const AI_IMAGE_QUALITY = 0.85;
+const AI_ANNOTATION_COLOR = '#0a84ff';
+const AI_ANNOTATION_WIDTH = 2.5;
+
 async function pageImageForAi() {
   const page = workspace.page;
   if (!page) return null;
-  const bounds = selected.length > 0 ? boundsOf(selected) : null;
-  const dataUrl = await pageRegionToDataUrl(page, { bounds, scale: 1 });
-  return { dataUrl, mimeType: 'image/png' };
+  // The ink is PAGE-local, so the layout rect contributes its size, not its
+  // document-space origin.
+  const rect = pageRect(workspace.pages, workspace.pageIndex);
+  const size = rect ?? pageSizeOf(page);
+  const maxEdge = Math.max(1, size.w, size.h);
+  const scale = Math.min(2, AI_IMAGE_MAX_EDGE / maxEdge);
+  const bounds = { minX: 0, minY: 0, maxX: size.w, maxY: size.h };
+  const dataUrl = await pageRegionToDataUrl(page, {
+    bounds,
+    scale,
+    type: 'image/jpeg',
+    quality: AI_IMAGE_QUALITY,
+  });
+  return { dataUrl, mimeType: 'image/jpeg' };
 }
 
-async function sendToAi(question) {
+// Turn normalized annotations into real page objects. rect, ellipse and
+// arrow are shape strokes; a callout is a text object with the label.
+function applyAiAnnotations(page, annotations) {
+  const rect = pageRect(workspace.pages, workspace.pageIndex);
+  const size = rect ?? pageSizeOf(page);
+  const sx = size.w / 1000;
+  const sy = size.h / 1000;
+  const added = [];
+  for (const annotation of annotations) {
+    const x = annotation.x * sx;
+    const y = annotation.y * sy;
+    const w = annotation.w * sx;
+    const h = annotation.h * sy;
+    if (annotation.type === 'callout') {
+      if (!annotation.label) continue;
+      added.push(createText({
+        x, y, w, h, text: annotation.label, size: 20, color: AI_ANNOTATION_COLOR,
+      }));
+      continue;
+    }
+    added.push(createShapeStroke({
+      kind: annotation.type,
+      mode: 'boxed',
+      box: { x0: x, y0: y, x1: x + w, y1: y + h },
+      color: AI_ANNOTATION_COLOR,
+      width: AI_ANNOTATION_WIDTH,
+      opacity: 1,
+    }));
+  }
+  if (added.length === 0) return 0;
+
+  // One history entry for the whole batch, so a single Undo removes every
+  // annotation the model added. Redo puts them back at their original z-order.
+  const start = page.strokes.length;
+  const placed = added.map((stroke, i) => ({ stroke, index: start + i }));
+  page.strokes.push(...added);
+  history.commit(onPage(page, {
+    undo: (strokes) => {
+      removeStrokesById(strokes, added.map((stroke) => stroke.id));
+    },
+    redo: (strokes) => {
+      insertStrokesAt(strokes, placed);
+    },
+  }));
+  workspace.markDirty();
+  surface.redraw();
+  syncUI();
+  return added.length;
+}
+
+async function sendToAi(question, { annotate = false } = {}) {
   const preset = activePreset();
   if (!preset) {
     syncAi();
@@ -1369,9 +1436,11 @@ async function sendToAi(question) {
     return;
   }
   syncAi();
-  askAi.update({ ...aiState, busy: true, error: '', answer: '' });
+  askAi.update({ ...aiState, busy: true, error: '', answer: '', annotating: 0 });
   try {
-    const messages = [{ role: 'user', content: question }];
+    const messages = annotate
+      ? [{ role: 'system', content: annotationPrompt() }, { role: 'user', content: question }]
+      : [{ role: 'user', content: question }];
     let image = null;
     if (preset.vision !== false) {
       try {
@@ -1382,10 +1451,23 @@ async function sendToAi(question) {
       }
     }
     const res = await callProvider(preset, { messages, image, model: preset.model });
-    aiState = { ...aiState, busy: false, answer: res.text || '', error: '' };
+    if (!annotate) {
+      aiState = { ...aiState, busy: false, answer: res.text || '', error: '', annotating: 0 };
+    } else {
+      const parsed = parseAnnotations(res.text);
+      if (!parsed.ok) {
+        aiState = { ...aiState, busy: false, answer: '', error: '', annotating: 0 };
+        toast('Could not read any annotations from that reply.');
+      } else {
+        const page = workspace.page;
+        const added = page ? applyAiAnnotations(page, parsed.annotations) : 0;
+        aiState = { ...aiState, busy: false, answer: '', error: '', annotating: added };
+        if (added === 0) toast('That reply had no annotations to add.');
+      }
+    }
   } catch (err) {
     console.warn('[inkpad] AI request failed', err);
-    aiState = { ...aiState, busy: false, answer: '', error: describeError(err) };
+    aiState = { ...aiState, busy: false, answer: '', error: describeError(err), annotating: 0 };
   }
   syncAi();
 }

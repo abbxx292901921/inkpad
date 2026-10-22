@@ -245,31 +245,46 @@ function renderPage(page, { scale = DEFAULT_SCALE, background = '#ffffff', bound
   return canvas;
 }
 
-function canvasToBlob(canvas, type = 'image/png') {
+function canvasToBlob(canvas, type = 'image/png', quality) {
   return new Promise((resolve, reject) => {
     if (typeof canvas.toBlob !== 'function') return reject(new Error('[inkpad] this canvas cannot be exported.'));
     canvas.toBlob((blob) => {
       if (blob) resolve(blob);
       else reject(new Error('[inkpad] the export canvas produced no image.'));
-    }, type);
+    }, type, quality);
   });
 }
 
-// Render a page to a PNG blob. Resolves with a Blob (type image/png).
-export async function pageToPngBlob(page, { scale = DEFAULT_SCALE, background = '#ffffff', bounds = null } = {}) {
+// Render a page to an image blob. PNG unless the caller asks for another type;
+// `quality` is the encoder quality for lossy types such as image/jpeg.
+export async function pageToPngBlob(page, {
+  scale = DEFAULT_SCALE,
+  background = '#ffffff',
+  bounds = null,
+  type = 'image/png',
+  quality,
+} = {}) {
   const canvas = renderPage(page, { scale, background, bounds });
   try {
-    return await canvasToBlob(canvas);
+    return await canvasToBlob(canvas, type, quality);
   } finally {
     canvas.width = 0; // release the backing store as soon as the bitmap exists
     canvas.height = 0;
   }
 }
 
-// A PNG of part of the page, as a data URL. This is how a selection (or the
-// whole page) is sent to an AI provider that can read images.
-export async function pageRegionToDataUrl(page, { bounds = null, scale = 1, background = '#ffffff' } = {}) {
-  const blob = await pageToPngBlob(page, { scale, background, bounds });
+// A data URL of part of the page (or the whole page), for an AI provider that
+// can read images. PNG by default so existing callers keep their behaviour; a
+// caller that wants a smaller upload can pass `type: 'image/jpeg'` and a
+// quality.
+export async function pageRegionToDataUrl(page, {
+  bounds = null,
+  scale = 1,
+  background = '#ffffff',
+  type = 'image/png',
+  quality,
+} = {}) {
+  const blob = await pageToPngBlob(page, { scale, background, bounds, type, quality });
   return blobToDataUrl(blob);
 }
 

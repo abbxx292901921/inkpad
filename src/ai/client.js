@@ -92,6 +92,14 @@ export function describeError(err) {
     const label = err.provider || 'That provider';
     return `${label} blocks browser calls, so it needs a proxy.`;
   }
+  // A server or parse failure carries the HTTP status and one short line of
+  // upstream detail. Prefer that sentence when it exists; the generic line is
+  // the fallback for an error constructed without a response.
+  if ((code === 'server' || code === 'parse')
+    && Number.isFinite(err.status) && err.status > 0
+    && typeof err.message === 'string' && err.message) {
+    return err.message;
+  }
   if (code && STATUS_TEXT[code]) return STATUS_TEXT[code];
   if (typeof err.message === 'string' && err.message) return err.message;
   return 'Something went wrong talking to that provider.';
@@ -117,33 +125,75 @@ async function readText(res) {
   return '';
 }
 
-async function readJson(res) {
+async function readJson(res, { status = 0, label = 'The provider', preset = null } = {}) {
+  const malformed = (detail) => new AiError(
+    'parse',
+    redact(`${label} sent an answer Inkpad could not read (HTTP ${status}: ${detail}).`, preset),
+    { status, provider: label },
+  );
   if (typeof res?.text === 'function') {
     const text = await res.text();
     if (!text) return null;
     try {
       return JSON.parse(text);
     } catch (err) {
-      throw new AiError('parse', 'That provider sent something that is not JSON.', { cause: err });
+      throw malformed(upstreamDetail(text) || 'not JSON');
     }
   }
   if (typeof res?.json === 'function') {
     try {
       return await res.json();
     } catch (err) {
-      throw new AiError('parse', 'That provider sent something that is not JSON.', { cause: err });
+      throw malformed('not JSON');
     }
   }
   return null;
 }
 
+// One short, sanitized line of what the provider actually said. A JSON error
+// body is unwrapped to its message; anything else is flattened so a newline
+// or a control character cannot break the sentence the UI shows.
+function upstreamDetail(body) {
+  if (body === null || body === undefined) return '';
+  let text = body;
+  if (typeof body !== 'string') {
+    try {
+      text = JSON.stringify(body);
+    } catch {
+      text = String(body);
+    }
+  }
+  const raw = String(text ?? '');
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    parsed = undefined;
+  }
+  return snippet(parsed === undefined ? raw : (messageOf(parsed) || raw));
+}
+
+function messageOf(value) {
+  if (typeof value === 'string') return value;
+  if (!value || typeof value !== 'object') return '';
+  for (const key of ['message', 'detail', 'error_description', 'error', 'description']) {
+    const next = value[key];
+    if (typeof next === 'string' && next.trim()) return next;
+    const nested = messageOf(next);
+    if (nested) return nested;
+  }
+  return '';
+}
+
+// At most 120 characters: enough to identify the failure, short enough for a
+// toast. The caller has already redacted the key.
 function snippet(text) {
-  const flat = String(text ?? '').replace(/\s+/g, ' ').trim();
-  return flat.length > 160 ? `${flat.slice(0, 160)}…` : flat;
+  const flat = String(text ?? '').replace(/[\u0000-\u001f\u007f]+/g, ' ').replace(/\s+/g, ' ').trim();
+  return flat.length > 120 ? flat.slice(0, 120) : flat;
 }
 
 function failureMessage(code, label, status, body) {
-  const detail = snippet(body);
+  const detail = upstreamDetail(body);
   switch (code) {
     case 'invalid-key':
       return `${label} rejected the API key.${detail ? ` ${detail}` : ''}`;
@@ -152,7 +202,9 @@ function failureMessage(code, label, status, body) {
     case 'rate-limited':
       return `${label} is rate-limiting this key.${detail ? ` ${detail}` : ''}`;
     default:
-      return `${label} answered with an error (HTTP ${status}).${detail ? ` ${detail}` : ''}`;
+      return detail
+        ? `${label} had a problem (${status}: ${detail}). Try again.`
+        : `${label} had a problem (HTTP ${status}). Try again.`;
   }
 }
 
@@ -199,8 +251,21 @@ export async function callProvider(preset, payload = {}, { fetchImpl = defaultFe
     });
   }
 
-  const json = await readJson(response);
-  const parsed = parseResponse(preset, json);
+  const json = await readJson(response, { status, label, preset });
+  let parsed;
+  try {
+    parsed = parseResponse(preset, json);
+  } catch (err) {
+    if (err?.code === 'parse') {
+      const detail = upstreamDetail(err.message) || 'no readable answer';
+      throw new AiError(
+        'parse',
+        redact(`${label} sent an answer Inkpad could not read (HTTP ${status}: ${detail}).`, preset),
+        { status, provider: label, cause: err },
+      );
+    }
+    throw err;
+  }
   return {
     text: parsed.text,
     model: parsed.model,

@@ -53,6 +53,7 @@ Object.defineProperty(globalThis, 'localStorage', {
 // --- the module under test --------------------------------------------------
 
 const P = await import(pathToFileURL(join(SRC, 'ai', 'presets.js')).href);
+const PR = await import(pathToFileURL(join(SRC, 'ai', 'providers.js')).href);
 
 // --- the tiny test harness --------------------------------------------------
 
@@ -144,9 +145,15 @@ eq('the model-list urls', defaults.map((p) => p.modelsUrl), [
   '',
 ]);
 ok('every starter apiKey is empty', defaults.every((p) => p.apiKey === ''));
-eq('Groq is text only', defaults[0].vision, false);
+eq('Groq takes images', defaults[0].vision, true);
+eq('OpenRouter takes images', defaults[1].vision, true);
 eq('Gemini takes images', defaults[2].vision, true);
 eq('Anthropic takes images', defaults[3].vision, true);
+eq(
+  'every starter vision flag matches its kind supportsVision',
+  defaults.map((p) => p.vision),
+  defaults.map((p) => PR.describeKind(p.kind).supportsVision),
+);
 eq('the raw preset has no request template', defaults[6].requestTemplate, '');
 eq('the raw preset has no response path', defaults[6].responseTextPath, '');
 ok('every starter kind is a known kind', defaults.every((p) => P.PROVIDER_KINDS.includes(p.kind)));

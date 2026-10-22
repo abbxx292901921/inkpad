@@ -25,7 +25,7 @@ const PRECACHE_BATCH = 6;
 // The app shell, precached on install. Every path is relative to the scope.
 const PRECACHE_PATHS = [
 './', 'assets/logo-maskable.svg', 'assets/logo.svg', 'icons/favicon-32.png', 'icons/icon-180.png', 'icons/icon-192.png',
-'icons/icon-512.png', 'icons/icon-maskable-512.png', 'index.html', 'manifest.json', 'src/ai/client.js', 'src/ai/models.js',
+'icons/icon-512.png', 'icons/icon-maskable-512.png', 'index.html', 'manifest.json', 'src/ai/annotate.js', 'src/ai/client.js', 'src/ai/models.js',
 'src/ai/presets.js', 'src/ai/providers.js', 'src/app.js', 'src/canvas.js', 'src/coord.js', 'src/export.js', 'src/input.js', 'src/layout.js',
 'src/pages.js', 'src/pdf.js', 'src/shapes.js', 'src/storage.js', 'src/strokes.js', 'src/sw-register.js', 'src/text.js', 'src/tools.js',
 'src/transform.js', 'src/ui/ask-ai.css', 'src/ui/ask-ai.js', 'src/ui/icons.js', 'src/ui/library.css', 'src/ui/library.js',

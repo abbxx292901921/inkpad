@@ -380,6 +380,40 @@ await rejectsWithCode(
 );
 eq(limited.calls.length, 1, 'a 429 still only calls fetch once');
 
+const overloaded = makeFetch(async () => makeResponse({
+  status: 502,
+  body: { error: { message: 'model overloaded' } },
+}));
+try {
+  await callProvider(OPENAI, PAYLOAD, { fetchImpl: overloaded });
+  ok(false, 'a 502 throws');
+} catch (err) {
+  ok(err.code === 'server', 'a 502 stays a server error');
+  eq(err.status, 502, 'the server error carries the HTTP status');
+  const sentence = describeError(err);
+  ok(sentence.includes('502'), 'the server sentence includes the status');
+  ok(sentence.includes('model overloaded'), 'the server sentence includes the upstream detail');
+  ok(!sentence.includes('\n'), 'the server sentence is one line');
+}
+
+const noisy = makeFetch(async () => makeResponse({
+  status: 500,
+  text: JSON.stringify({ error: { message: `near ${KEY} then ${'x'.repeat(300)}\nsecond line` } }),
+}));
+try {
+  await callProvider(OPENAI, PAYLOAD, { fetchImpl: noisy });
+  ok(false, 'a noisy 500 throws');
+} catch (err) {
+  const sentence = describeError(err);
+  ok(!sentence.includes('\n'), 'newlines are stripped from the upstream detail');
+  ok(!sentence.includes(KEY), 'the upstream detail is redacted');
+  ok(sentence.includes('[redacted]'), 'the redaction is visible');
+  const start = sentence.indexOf('(500: ');
+  const end = sentence.lastIndexOf(')');
+  const detail = start >= 0 && end > start ? sentence.slice(start + 6, end) : '';
+  ok(detail.length > 0 && detail.length <= 120, `the upstream detail is at most 120 chars (got ${detail.length})`);
+}
+
 const broken = makeFetch(async () => {
   throw new TypeError('Failed to fetch');
 });
@@ -433,6 +467,22 @@ await rejectsWithCode(
   () => callProvider(OPENAI, PAYLOAD, { fetchImpl: notJson }),
   'parse',
   'a body that is not JSON becomes a parse error',
+);
+try {
+  await callProvider(OPENAI, PAYLOAD, { fetchImpl: notJson });
+} catch (err) {
+  const sentence = describeError(err);
+  eq(err.status, 200, 'the parse error carries the HTTP status');
+  ok(sentence.includes('200'), 'the parse sentence includes the status');
+  ok(sentence.includes('not json at all'), 'the parse sentence includes the upstream detail');
+  ok(!sentence.includes('\n'), 'the parse sentence is one line');
+}
+
+const unreadable = makeFetch(async () => makeResponse({ body: { nothing: true } }));
+await rejectsWithCode(
+  () => callProvider(OPENAI, PAYLOAD, { fetchImpl: unreadable }),
+  'parse',
+  'a JSON body with no answer becomes a parse error',
 );
 
 const rawFetch = makeFetch(async () => makeResponse({ body: { answer: { value: 'Raw.' } } }));
