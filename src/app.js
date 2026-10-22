@@ -36,7 +36,7 @@ import {
   resetFingerDrawing,
   subscribeInput,
 } from './input.js';
-import { createImageLayer, addLayer, removeLayer, pageHasContent, createPage } from './pages.js';
+import { createImageLayer, addLayer, removeLayer, pageHasContent, createPage, containFit } from './pages.js';
 import { rasterizePdf } from './pdf.js';
 import { createWorkspace } from './workspace.js';
 import { downloadNoteAsPng, printNote } from './export.js';
@@ -427,6 +427,34 @@ function buildMoreMenu() {
 // Images become a background layer of the current page, so you write on top
 // of them. PDFs become one page of the note per PDF page, each with the
 // rasterised page as its background.
+//
+// A layer is placed in PAGE space, at the part of the page that is visible
+// right now. That is what makes it pan and zoom with the ink: zoom in to
+// write on an imported photo and the photo comes with you.
+
+// The page-space rectangle of the visible area.
+function visiblePageRect() {
+  const rect = canvas.getBoundingClientRect();
+  return {
+    x: -viewport.panX / viewport.zoom,
+    y: -viewport.panY / viewport.zoom,
+    w: rect.width / viewport.zoom,
+    h: rect.height / viewport.zoom,
+  };
+}
+
+// Fit an image into the visible page area.
+function placeLayer(layer, view) {
+  layer.rect = containFit(
+    layer.naturalWidth,
+    layer.naturalHeight,
+    view.x,
+    view.y,
+    view.w,
+    view.h,
+  );
+}
+
 async function importFile(file) {
   if (!workspace.current) workspace.newNote();
   if (file.type === 'application/pdf' || /\.pdf$/i.test(file.name)) {
@@ -439,7 +467,11 @@ async function importFile(file) {
   }
   const url = URL.createObjectURL(file);
   const layer = createImageLayer({ blob: file, url, name: file.name });
-  layer.onLoad = () => surface.redraw();
+  const view = visiblePageRect();
+  layer.onLoad = (l) => {
+    placeLayer(l, view);
+    surface.redraw();
+  };
   addLayer(workspace.page, layer);
   workspace.markDirty();
   if (workspace.current.title === 'Untitled') {
@@ -459,6 +491,7 @@ async function importPdfFile(file) {
       return;
     }
 
+    const view = visiblePageRect();
     const newPages = rendered.map((p) => {
       const pg = createPage({ name: `Page ${p.pageNumber}` });
       const layer = createImageLayer({
@@ -467,7 +500,10 @@ async function importPdfFile(file) {
         name: file.name,
         kind: 'pdf',
       });
-      layer.onLoad = () => surface.redraw();
+      layer.onLoad = (l) => {
+        placeLayer(l, view);
+        surface.redraw();
+      };
       pg.layers.push(layer);
       return pg;
     });

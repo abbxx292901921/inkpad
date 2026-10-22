@@ -86,12 +86,13 @@ Regenerate the service worker's precache list after adding a file:
 - Note = `{ id, title, folderId, createdAt, updatedAt, pages[] }`
 - Page = `{ id, name, layers[], strokes[] }`
 - Layer = an imported file drawn UNDER the ink: `{ id, kind: 'image'|'pdf',
-  name, url, img, naturalWidth, naturalHeight, loaded }`. The blob is kept so
-  IndexedDB can store it later.
+  name, blob, url, img, naturalWidth, naturalHeight, loaded, rect }`. The blob
+  is kept so IndexedDB can store it later. `rect` is the layer's PAGE-space
+  rectangle, so it pans and zooms WITH the ink.
 - Render order is **layers -> strokes**. That is the whole point: importing
   your homework and writing on top of it is the normal case.
-- v1 draws layers in SCREEN space, contain-fitted to the canvas. When
-  pan/zoom lands they become page-space objects.
+- A layer is placed at the visible page area at import time, contain-fitted.
+  A layer with no rect falls back to being fitted to the screen.
 
 ## File import
 - `<input id="file-input" type="file" accept="image/*,application/pdf">`,
@@ -286,14 +287,13 @@ Rules:
   worker (phase E), exempt it from Safari's 7-day storage eviction.
 
 ## Known issues
-- (phase C) Imported layers are drawn in SCREEN space, contain-fitted to the
-  canvas, so they do not pan/zoom with the ink yet. They will become
-  page-space objects.
-- (phase C) Folders are rendered in the library but cannot be created yet
-  (the `+` next to "Folders" is a placeholder).
-- (phase C) The library's "Record a lecture", "Find a template", Gallery and
-  Settings are placeholders.
-- (phase C) Audio recording, templates and the AI layer are not built.
+- (phase C) The library's "Record a lecture", "Find a template" and Gallery
+  are placeholders. Settings and the bell are placeholders too.
+- (phase C) Audio recording, templates, a text tool and the AI layer are not
+  built yet.
+- (phase C) Folders can be created, renamed and deleted, but notes can only
+  be moved to a folder from the more menu — not by dragging them in the
+  library.
 - (phase C) The eraser treats a shape's points as an open polyline, so the
   closing edge of a rectangle is not erasable.
 - (phase C) No keyboard shortcut for the tools yet (undo/redo are bound to

@@ -54,13 +54,17 @@ export function createNote({ title = 'Untitled', folderId = null } = {}) {
 // An imported image (a photo of your homework, a screenshot, a diagram), or
 // a rasterised PDF page. The blob is kept so it can be written to IndexedDB
 // later; `url` is the object URL used to display it now.
-export function createImageLayer({ blob, url, name = 'image', kind = 'image' }) {
+export function createImageLayer({ blob, url, name = 'image', kind = 'image', rect = null }) {
   const layer = {
     id: makeId('layer'),
     kind,
     name,
     blob: blob ?? null,
     url,
+    // The page-space rectangle the layer occupies. Set once the image has
+    // loaded and been fitted; until then the layer is drawn fitted to the
+    // screen.
+    rect: rect ? { ...rect } : null,
     img: null,
     naturalWidth: 0,
     naturalHeight: 0,

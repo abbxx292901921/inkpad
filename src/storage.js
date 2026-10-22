@@ -188,6 +188,17 @@ export function toLayerRecord(layer) {
   if (layer.pageNumber != null) record.pageNumber = layer.pageNumber;
   if (layer.width != null) record.width = layer.width;
   if (layer.height != null) record.height = layer.height;
+  // The page-space rectangle the layer occupies. Without it the layer would
+  // have to be re-fitted to the screen on every load, and it would not pan
+  // or zoom with the ink.
+  if (layer.rect && Number.isFinite(layer.rect.x)) {
+    record.rect = {
+      x: layer.rect.x,
+      y: layer.rect.y,
+      w: layer.rect.w,
+      h: layer.rect.h,
+    };
+  }
   return record;
 }
 

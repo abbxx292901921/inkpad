@@ -116,16 +116,25 @@ export function createDrawingSurface(canvas, viewport, hooks) {
   // homework). They sit UNDER the ink, which is what makes "import the
   // assignment and write on it" work.
   //
-  // v1 draws layers in screen space, fitted to the visible canvas. Once
-  // pan/zoom lands they become page-space objects.
+  // A layer with a page-space rect pans and zooms WITH the ink, so zooming
+  // in to write on an imported photo keeps the photo and the ink together.
+  // A layer without one falls back to being fitted to the visible canvas.
   function drawLayers() {
     const layers = hooks.getLayers ? hooks.getLayers() : [];
     if (layers.length === 0) return;
     const rect = canvas.getBoundingClientRect();
-    ctx.save();
-    ctx.setTransform(viewport.dpr, 0, 0, viewport.dpr, 0, 0);
     for (const layer of layers) {
       if (!layer.loaded || !layer.img) continue;
+      const r = layer.rect;
+      if (r && Number.isFinite(r.x) && r.w > 0 && r.h > 0) {
+        ctx.save();
+        applyTransform(ctx, viewport);
+        ctx.drawImage(layer.img, r.x, r.y, r.w, r.h);
+        ctx.restore();
+        continue;
+      }
+      ctx.save();
+      ctx.setTransform(viewport.dpr, 0, 0, viewport.dpr, 0, 0);
       const fit = containFit(
         layer.naturalWidth,
         layer.naturalHeight,
@@ -135,8 +144,8 @@ export function createDrawingSurface(canvas, viewport, hooks) {
         rect.height,
       );
       ctx.drawImage(layer.img, fit.x, fit.y, fit.w, fit.h);
+      ctx.restore();
     }
-    ctx.restore();
   }
 
   // Full repaint: background layers, committed strokes, then any stroke that
