@@ -193,11 +193,48 @@ function isShellUrl(href) {
   return path === base || path === base + 'index.html';
 }
 
+// The app's own code: the modules, the stylesheet and the manifest. These
+// change on every deploy, so they are fetched from the network first.
+function isAppCode(href) {
+  const path = new URL(href).pathname;
+  const base = new URL(scopeBase()).pathname;
+  if (!path.startsWith(base)) return false;
+  const rel = path.slice(base.length);
+  return (
+    rel.startsWith('src/') ||
+    rel === 'theme.css' ||
+    rel === 'manifest.json'
+  );
+}
+
+// Network-first for the app's own code, with the cache as the offline
+// fallback.
+async function handleAppCode(cache, request) {
+  try {
+    const response = await fetch(request);
+    if (response && response.ok && response.type === 'basic') {
+      await cache.put(request, response.clone());
+    }
+    return response;
+  } catch (err) {
+    const cached = await cache.match(request);
+    if (cached) return cached;
+    throw err;
+  }
+}
+
 // Everything else is CACHE-FIRST with a background revalidate: the app opens
 // instantly offline and the cache is refreshed for the next launch.
+//
+// EXCEPT the app's own code, which is NETWORK-FIRST: those files are small,
+// they change on every deploy, and serving a stale module means the user is
+// one reload behind the deployment. The big immutable things (the vendored
+// pdf.js, the icons, the fonts) stay cache-first, so a deploy does not
+// re-download five megabytes.
 async function handleAsset(event) {
   const cache = await caches.open(CACHE_NAME);
   const request = event.request;
+  if (isAppCode(request.url)) return handleAppCode(cache, request);
   const cached = await cache.match(request);
   const revalidate = fetch(request)
     .then(async (response) => {
