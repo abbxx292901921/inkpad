@@ -40,6 +40,24 @@ body {
   position: fixed;
   inset: 0;
   -webkit-text-size-adjust: 100%;
+  /* NOTHING on the chrome may be selected. A finger resting on the screen is
+     a long press to iOS, and a long press on selectable content starts a
+     text selection and pops up the Copy/Paste callout — which is what made
+     the toolbar highlight like a web page. */
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+/* Real text fields still need to be selectable and editable. */
+input,
+textarea,
+[contenteditable="true"],
+.ai-answer,
+.prompt-input {
+  -webkit-user-select: text;
+  user-select: text;
+  -webkit-touch-callout: default;
 }
 
 #page {
@@ -113,6 +131,12 @@ body {
   pointer-events: auto;
   -webkit-backdrop-filter: blur(14px);
   backdrop-filter: blur(14px);
+  /* Belt and braces: WebKit's user-select inheritance is not reliable, so
+     every interactive part says it explicitly. */
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .pill-center {
@@ -180,6 +204,24 @@ body {
   box-shadow: var(--pill-shadow);
 }
 
+/* Every control in the app behaves the same way: no selection, no callout
+   menu, no tap flash, and no double-tap-to-zoom delay. A finger resting on
+   a control is a long press to iOS, and a long press must never select
+   anything or pop a menu over the notebook. */
+button,
+.qswatch,
+.pal-swatch,
+.pal-dot,
+.prompt-item,
+.menu-item,
+.sty {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+
 /* --- icon buttons --------------------------------------------------------- */
 
 .ticon {
@@ -197,6 +239,13 @@ body {
   color: var(--chrome);
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
+  /* A finger resting on a button is a long press to iOS: without this it
+     selects the label and pops the callout menu. */
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  /* manipulation: no 300ms double-tap-to-zoom delay on a button. */
+  touch-action: manipulation;
 }
 
 .ticon:hover:not(:disabled) {

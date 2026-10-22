@@ -17,6 +17,7 @@
   pointer-events: none;
   -webkit-user-select: none;
   user-select: none;
+  -webkit-touch-callout: none;
   -webkit-tap-highlight-color: transparent;
 }
 
@@ -78,6 +79,7 @@
   touch-action: none;
   -webkit-user-select: none;
   user-select: none;
+  -webkit-touch-callout: none;
   -webkit-tap-highlight-color: transparent;
 }
 

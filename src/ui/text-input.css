@@ -14,6 +14,8 @@
   pointer-events: none;
   -webkit-user-select: none;
   user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
   -webkit-tap-highlight-color: transparent;
 }
 
@@ -51,6 +53,11 @@
   overflow-y: auto;
   pointer-events: auto;
   touch-action: manipulation;
+  /* The field is a real text field: it must be selectable and editable,
+     even though the layer around it is not. */
+  -webkit-user-select: text;
+  user-select: text;
+  -webkit-touch-callout: default;
   caret-color: currentColor;
 }
 
