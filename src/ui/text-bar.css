@@ -1,0 +1,197 @@
+/* ui/text-bar.css — the text formatting bar and the page-1 note title.
+   theme.css is owned by another agent, so these styles ship in their own file
+   and ui/text-bar.js links it in at runtime (no build step). */
+
+.text-bar {
+  position: fixed;
+  left: 10px;
+  right: 10px;
+  bottom: calc(12px + env(safe-area-inset-bottom));
+  z-index: 6;
+  display: flex;
+  justify-content: center;
+  /* The strip is click-through; only the card catches taps. */
+  pointer-events: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.text-bar[hidden] {
+  display: none;
+}
+
+.tb-card {
+  pointer-events: auto;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  max-width: 100%;
+  padding: 7px 10px;
+  border-radius: var(--radius-pill, 20px);
+  background: var(--pill-bg, rgba(255, 255, 255, 0.94));
+  box-shadow: var(--pill-shadow, 0 6px 24px rgba(0, 0, 0, 0.16));
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  color: var(--ink, #1b1b1b);
+}
+
+.tb-sep {
+  width: 1px;
+  height: 22px;
+  margin: 0 3px;
+  background: var(--hairline, #e5e5ea);
+}
+
+.tb-select {
+  appearance: none;
+  -webkit-appearance: none;
+  border: 0;
+  border-radius: var(--radius-btn, 10px);
+  background: transparent;
+  color: inherit;
+  font: 600 14px/1 system-ui, -apple-system, "Segoe UI", sans-serif;
+  padding: 9px 22px 9px 9px;
+  /* The chevron is a CSS triangle, so no image or webfont is needed. */
+  background-image:
+    linear-gradient(45deg, transparent 50%, currentColor 50%),
+    linear-gradient(135deg, currentColor 50%, transparent 50%);
+  background-position:
+    calc(100% - 12px) calc(50% + 2px),
+    calc(100% - 8px) calc(50% + 2px);
+  background-size: 4px 4px, 4px 4px;
+  background-repeat: no-repeat;
+  cursor: pointer;
+}
+
+.tb-size {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.tb-step {
+  width: 30px;
+  height: 32px;
+  border: 0;
+  border-radius: var(--radius-btn, 10px);
+  background: transparent;
+  color: inherit;
+  font: 500 20px/1 system-ui, -apple-system, "Segoe UI", sans-serif;
+  cursor: pointer;
+}
+
+.tb-step:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.tb-size-value {
+  min-width: 26px;
+  text-align: center;
+  font: 600 14px/1 system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-variant-numeric: tabular-nums;
+}
+
+.tb-swatch {
+  width: 30px;
+  height: 30px;
+  margin: 0 2px;
+  border: 1.5px solid rgba(0, 0, 0, 0.16);
+  border-radius: 50%;
+  background: #1b1b1b;
+  box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.75);
+  cursor: pointer;
+}
+
+.tb-toggle {
+  width: 34px;
+  height: 32px;
+  border: 0;
+  border-radius: var(--radius-btn, 10px);
+  background: transparent;
+  color: inherit;
+  font: 600 16px/1 system-ui, -apple-system, "Segoe UI", sans-serif;
+  cursor: pointer;
+}
+
+.tb-toggle.is-on {
+  background: var(--accent-soft, #e8f2ff);
+  color: var(--accent, #0a84ff);
+}
+
+.tb-bold {
+  font-weight: 800;
+}
+
+.tb-italic {
+  font-style: italic;
+  font-family: Georgia, "Times New Roman", serif;
+}
+
+.tb-underline {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.tb-list,
+.tb-align {
+  font-size: 15px;
+}
+
+.tb-step:hover,
+.tb-toggle:hover,
+.tb-select:hover {
+  background-color: rgba(0, 0, 0, 0.05);
+}
+
+.tb-toggle.is-on:hover {
+  background-color: var(--accent-soft, #e8f2ff);
+}
+
+/* --- the note title above page 1 ----------------------------------------- */
+
+.note-title {
+  position: fixed;
+  z-index: 2;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink, #1b1b1b);
+  font: 650 15px/1.3 system-ui, -apple-system, "Segoe UI", sans-serif;
+  letter-spacing: -0.01em;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: text;
+  pointer-events: auto;
+  touch-action: manipulation;
+}
+
+.note-title[hidden] {
+  display: none;
+}
+
+.note-title:active {
+  opacity: 0.65;
+}
+
+@media (max-width: 520px) {
+  .tb-card {
+    gap: 2px;
+    padding: 6px 8px;
+  }
+
+  .tb-step {
+    width: 26px;
+  }
+
+  .tb-toggle {
+    width: 30px;
+  }
+}

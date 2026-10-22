@@ -25,6 +25,20 @@ export const MAX_TEXT_SIZE = 96;
 // part of the UI rather than as a canvas special.
 export const TEXT_FONT_STACK = 'system-ui, -apple-system, "Segoe UI", sans-serif';
 
+// Rich-text families. SYSTEM stacks only: no webfont is fetched, so a note
+// renders the same with the network off (and on every platform that has the
+// face, with a sensible fallback when it does not).
+export const TEXT_FONT_FAMILIES = {
+  sans: TEXT_FONT_STACK,
+  serif: 'Georgia, "Times New Roman", serif',
+  mono: 'ui-monospace, "Courier New", monospace',
+  hand: '"Bradley Hand", "Segoe Script", cursive',
+};
+
+export const TEXT_FAMILIES = ['sans', 'serif', 'mono', 'hand'];
+export const TEXT_ALIGNS = ['left', 'center', 'right'];
+export const TEXT_LISTS = ['none', 'bullet', 'number'];
+
 // The baseline sits this far below the top of the box, and the lines are this
 // far apart. Both are ratios of the font size, so they scale with it.
 const ASCENT_RATIO = 0.8;
@@ -55,15 +69,46 @@ function num(value, fallback = 0) {
   return Number.isFinite(n) ? n : fallback;
 }
 
-// The CSS font shorthand for a size, in page units.
-export function textFont(size) {
-  return `${clampTextSize(size)}px ${TEXT_FONT_STACK}`;
+// The CSS font shorthand for a size, in page units. A family is one of
+// TEXT_FAMILIES; bold/italic are part of the shorthand the canvas needs.
+export function textFont(size, family = 'sans', { bold = false, italic = false } = {}) {
+  const style = `${italic ? 'italic ' : ''}${bold ? '700 ' : ''}`;
+  return `${style}${clampTextSize(size)}px ${fontStack(family)}`;
+}
+
+export function fontStack(family) {
+  return TEXT_FONT_FAMILIES[family] ?? TEXT_FONT_STACK;
 }
 
 export function clampTextSize(size) {
   const n = Number(size);
   if (!Number.isFinite(n)) return DEFAULT_TEXT_SIZE;
   return Math.max(MIN_TEXT_SIZE, Math.min(MAX_TEXT_SIZE, n));
+}
+
+function normalizeFamily(family) {
+  return TEXT_FAMILIES.includes(family) ? family : 'sans';
+}
+
+function normalizeAlign(align) {
+  return TEXT_ALIGNS.includes(align) ? align : 'left';
+}
+
+function normalizeList(list) {
+  return TEXT_LISTS.includes(list) ? list : 'none';
+}
+
+// The rich-text fields, with old records and partial updates normalised to
+// the defaults that preserve the original plain text look.
+function textStyle(obj) {
+  return {
+    family: normalizeFamily(obj?.family),
+    bold: obj?.bold === true,
+    italic: obj?.italic === true,
+    underline: obj?.underline === true,
+    align: normalizeAlign(obj?.align),
+    list: normalizeList(obj?.list),
+  };
 }
 
 // A text object is anything that says it is one.
@@ -95,6 +140,8 @@ export function syncTextAnchor(obj) {
 // `w`/`h` are the box in PAGE units; 0 means "size me to the text".
 export function createText({
   x = 0, y = 0, w = 0, h = 0, text = '', size = DEFAULT_TEXT_SIZE, color = '#1b1b1b',
+  family = 'sans', bold = false, italic = false, underline = false,
+  align = 'left', list = 'none',
 } = {}) {
   const px = num(x);
   const py = num(y);
@@ -114,8 +161,14 @@ export function createText({
     h: Math.max(0, num(h)),
     size: clampTextSize(size),
     text: String(text ?? ''),
+    family: normalizeFamily(family),
+    bold: bold === true,
+    italic: italic === true,
+    underline: underline === true,
+    align: normalizeAlign(align),
+    list: normalizeList(list),
     points: [{ x: px, y: py, pressure: 0.5, t: now() }],
-    // Filled in by measureText(): { width, height, lines, size, text, w }.
+    // Filled in by measureText(): the wrapped lines and their list markers.
     measured: null,
   };
 }
@@ -157,19 +210,44 @@ function wrapParagraph(ctx, paragraph, limit) {
   return lines;
 }
 
-// The lines of a text object, wrapped to a box width. A box width of 0 means
-// the box is auto-sized: every "\n" starts a new line and nothing else
-// breaks.
-function wrapText(ctx, text, limit) {
+// The lines of a text object, wrapped to a box width, together with the list
+// marker and left inset of each line.
+//
+// A box width of 0 means the box is auto-sized: every "\n" starts a new line
+// and nothing else breaks. For a list, the marker reserves an inset on EVERY
+// line of its item, so a wrapped continuation stays aligned under the text,
+// not under the bullet. Only the first line of an item carries the marker.
+function wrapText(ctx, text, limit, list) {
   const out = [];
+  const markers = [];
+  const indents = [];
+  let number = 0;
   for (const paragraph of String(text ?? '').split('\n')) {
-    if (limit <= 0) {
-      out.push(paragraph);
-      continue;
+    const blank = paragraph.trim() === '';
+    let marker = '';
+    if (list !== 'none' && !blank) {
+      number += 1;
+      marker = list === 'bullet' ? '•' : `${number}.`;
     }
-    for (const line of wrapParagraph(ctx, paragraph, limit)) out.push(line);
+    const indent = marker ? widthOf(ctx, `${marker} `) : 0;
+    const available = limit > 0 ? Math.max(0, limit - indent) : 0;
+    const lines = blank
+      ? ['']
+      : available > 0
+        ? wrapParagraph(ctx, paragraph, available)
+        : [paragraph];
+    for (let i = 0; i < lines.length; i += 1) {
+      out.push(lines[i]);
+      markers.push(i === 0 ? marker : '');
+      indents.push(blank ? 0 : indent);
+    }
   }
-  return out.length ? out : [''];
+  if (!out.length) {
+    out.push('');
+    markers.push('');
+    indents.push(0);
+  }
+  return { lines: out, markers, indents };
 }
 
 // Measure a text object with a 2D context.
@@ -183,17 +261,47 @@ export function measureText(ctx, obj) {
   const size = clampTextSize(obj.size);
   const text = String(obj.text ?? '');
   const w = Math.max(0, num(obj.w));
+  const style = textStyle(obj);
   const cached = obj.measured;
-  if (cached && cached.size === size && cached.text === text && cached.w === w) return cached;
+  if (
+    cached &&
+    cached.size === size &&
+    cached.text === text &&
+    cached.w === w &&
+    cached.family === style.family &&
+    cached.bold === style.bold &&
+    cached.italic === style.italic &&
+    cached.underline === style.underline &&
+    cached.align === style.align &&
+    cached.list === style.list
+  ) {
+    return cached;
+  }
 
   ctx.save?.();
-  ctx.font = textFont(size);
-  const lines = wrapText(ctx, text, w);
+  ctx.font = textFont(size, style.family, style);
+  const { lines, markers, indents } = wrapText(ctx, text, w, style.list);
+  const lineWidths = [];
   let width = 0;
-  for (const line of lines) width = Math.max(width, widthOf(ctx, line));
+  for (let i = 0; i < lines.length; i += 1) {
+    const lineWidth = widthOf(ctx, lines[i]);
+    lineWidths.push(lineWidth);
+    width = Math.max(width, indents[i] + lineWidth);
+  }
   ctx.restore?.();
 
-  const measured = { width, height: lines.length * size * LINE_HEIGHT_RATIO, lines, size, text, w };
+  const measured = {
+    width,
+    height: lines.length * size * LINE_HEIGHT_RATIO,
+    lines,
+    markers,
+    indents,
+    lineWidths,
+    size,
+    text,
+    w,
+    ...style,
+  };
   obj.measured = measured;
   return measured;
 }
@@ -212,13 +320,19 @@ export function renderText(ctx, obj) {
   const size = clampTextSize(obj.size);
   const text = String(obj.text ?? '');
   const anchor = anchorOf(obj);
+  const style = textStyle(obj);
   const measured = measureText(ctx, obj);
   if (!text) return measured;
 
   const lines = Array.isArray(measured?.lines) ? measured.lines : [];
+  const markers = Array.isArray(measured?.markers) ? measured.markers : [];
+  const indents = Array.isArray(measured?.indents) ? measured.indents : [];
+  const lineWidths = Array.isArray(measured?.lineWidths) ? measured.lineWidths : [];
+  const color = obj.color ?? '#1b1b1b';
+
   ctx.save?.();
-  ctx.font = textFont(size);
-  ctx.fillStyle = obj.color ?? '#1b1b1b';
+  ctx.font = textFont(size, style.family, style);
+  ctx.fillStyle = color;
   ctx.textAlign = 'left';
   ctx.textBaseline = 'alphabetic';
 
@@ -228,8 +342,31 @@ export function renderText(ctx, obj) {
 
   const lineHeight = size * LINE_HEIGHT_RATIO;
   const ascent = size * ASCENT_RATIO;
+  // Align relative to the DRAWN box; an auto-sized box aligns inside its
+  // measured width, which is a no-op for every line shorter than the widest.
+  const boxW = num(obj.w) > 0 ? num(obj.w) : num(measured?.width);
   for (let i = 0; i < lines.length; i += 1) {
-    ctx.fillText(lines[i], anchor.x, anchor.y + ascent + i * lineHeight);
+    const lineWidth = lineWidths[i] ?? 0;
+    const indent = indents[i] ?? 0;
+    const fullWidth = indent + lineWidth;
+    const offset =
+      style.align === 'center'
+        ? (boxW - fullWidth) / 2
+        : style.align === 'right'
+          ? boxW - fullWidth
+          : 0;
+    const y = anchor.y + ascent + i * lineHeight;
+    const x = anchor.x + offset + indent;
+    if (markers[i]) ctx.fillText(markers[i], anchor.x + offset, y);
+    ctx.fillText(lines[i], x, y);
+    if (style.underline && lineWidth > 0) {
+      ctx.strokeStyle = color;
+      ctx.lineWidth = Math.max(1, size * 0.06);
+      ctx.beginPath?.();
+      ctx.moveTo?.(x, y + size * 0.18);
+      ctx.lineTo?.(x + lineWidth, y + size * 0.18);
+      ctx.stroke?.();
+    }
   }
   ctx.restore?.();
   return measured;

@@ -46,8 +46,16 @@ import { downloadPageAsPng, downloadNoteAsPng, printNote, pageRegionToDataUrl } 
 import { registerServiceWorker } from './sw-register.js';
 import { buildAskAi } from './ui/ask-ai.js';
 import { buildTextInput } from './ui/text-input.js';
+import { buildTextBar } from './ui/text-bar.js';
 import { buildShapeEditor } from './ui/shape-editor.js';
-import { createText, isTextObject, syncTextAnchor, fitTextSize } from './text.js';
+import {
+  createText,
+  isTextObject,
+  syncTextAnchor,
+  fitTextSize,
+  clampTextSize,
+  DEFAULT_TEXT_SIZE,
+} from './text.js';
 import { isShapeStroke, setVertex, toSquare, createShapeStroke } from './shapes.js';
 import { buildSettings } from './ui/settings.js';
 import {
@@ -323,6 +331,7 @@ const surface = createDrawingSurface(
       // The selection box is drawn in screen pixels, so it has to follow a
       // pan or a zoom just like the ink does.
       if (selected.length > 0) syncSelection();
+      positionTextChrome();
       updatePageChrome();
       schedulePageSync();
     },
@@ -1135,6 +1144,7 @@ function syncSelection() {
   const b = selected.length > 0 ? boundsOf(selected) : null;
   selection.update({ bounds: b, visible: Boolean(b) });
   syncShapeEditor();
+  syncTextChrome();
 }
 
 function clearSelection() {
@@ -1571,6 +1581,12 @@ const textInput = buildTextInput({
       text,
       size: tool.options.size ?? 28,
       color: tool.options.color,
+      family: tool.options.family ?? 'sans',
+      bold: tool.options.bold === true,
+      italic: tool.options.italic === true,
+      underline: tool.options.underline === true,
+      align: tool.options.align ?? 'left',
+      list: tool.options.list ?? 'none',
     });
     // Shrink the font until the text fits the box the user drew.
     if (obj.w > 0 && obj.h > 0) obj.size = fitTextSize(measureCtx, obj);
@@ -1588,6 +1604,199 @@ const textInput = buildTextInput({
   },
 });
 document.body.appendChild(textInput.element);
+
+// --- text bar (B1) ----------------------------------------------------------
+// The formatting bar is shown while the text tool is active or a text object
+// is selected. A patch on a selected text object is a live, undoable edit; a
+// patch with nothing selected becomes the default for the NEXT text box.
+const TEXT_FORMAT_FIELDS = [
+  'family', 'size', 'color', 'bold', 'italic', 'underline', 'align', 'list',
+];
+const TEXT_SNAPSHOT_FIELDS = [...TEXT_FORMAT_FIELDS, 'text', 'w', 'h', 'x', 'y'];
+
+let textBar = null;
+let titleEl = null;
+let textBarPaletteCycle = false;
+let lastTextColor = null;
+
+function selectedTextObjects() {
+  return selected.filter(isTextObject);
+}
+
+function textFormatState() {
+  const source = selectedTextObjects()[0] ?? getToolOptions('text') ?? {};
+  return {
+    family: source.family ?? 'sans',
+    size: source.size ?? DEFAULT_TEXT_SIZE,
+    color: source.color ?? '#1b1b1b',
+    bold: source.bold === true,
+    italic: source.italic === true,
+    underline: source.underline === true,
+    align: source.align ?? 'left',
+    list: source.list ?? 'none',
+  };
+}
+
+function snapshotTextObjects(objects) {
+  return objects.map((obj) => {
+    const fields = {};
+    for (const key of TEXT_SNAPSHOT_FIELDS) fields[key] = obj[key];
+    return { obj, fields, points: (obj.points ?? []).map((p) => ({ ...p })) };
+  });
+}
+
+function restoreTextObjects(snapshot) {
+  for (const snap of snapshot) {
+    Object.assign(snap.obj, snap.fields);
+    snap.obj.points = snap.points.map((p) => ({ ...p }));
+    // The wrapped lines, markers and underline positions must be recomputed
+    // for the restored fields on the next paint.
+    snap.obj.measured = null;
+  }
+}
+
+function applyTextPatch(patch) {
+  const objects = selectedTextObjects();
+  if (objects.length === 0) {
+    // Nothing selected: remember the choice for the next text box.
+    const defaults = {};
+    for (const key of TEXT_FORMAT_FIELDS) {
+      if (!(key in patch)) continue;
+      defaults[key] = key === 'size' ? clampTextSize(patch.size) : patch[key];
+    }
+    setToolOptions('text', defaults);
+    syncUI();
+    return;
+  }
+
+  const before = snapshotTextObjects(objects);
+  for (const obj of objects) {
+    for (const key of TEXT_FORMAT_FIELDS) {
+      if (!(key in patch)) continue;
+      obj[key] = key === 'size' ? clampTextSize(patch.size) : patch[key];
+    }
+    obj.measured = null;
+  }
+  const after = snapshotTextObjects(objects);
+
+  const page = workspace.page;
+  if (page) {
+    history.commit(onPage(page, {
+      undo: () => restoreTextObjects(before),
+      redo: () => restoreTextObjects(after),
+    }));
+  }
+  workspace.markDirty();
+  surface.redraw();
+  syncSelection();
+}
+
+// The palette belongs to the app, not to the bar. When it was opened from the
+// bar WITH a text selection, intercept the colour choice before the palette's
+// own handler can change the drawing tool's default, then patch the text.
+function interceptTextBarColor(e) {
+  if (!textBarPaletteCycle || selectedTextObjects().length === 0) return;
+  const target = e.target;
+  let hex = null;
+  const swatch = target && target.closest ? target.closest('.pal-swatch') : null;
+  if (swatch) {
+    hex = swatch.title;
+  } else if (target && target.classList && target.classList.contains('wheel-input')) {
+    hex = target.value;
+    if (hex === lastTextColor) {
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
+    const userPalette = palettes[1];
+    if (!userPalette.includes(hex)) userPalette.unshift(hex);
+    paletteIndex = 1;
+  }
+  if (!hex) return;
+  e.preventDefault();
+  e.stopPropagation();
+  if (hex === lastTextColor) return;
+  lastTextColor = hex;
+  applyTextPatch({ color: hex });
+  palette.update({ color: hex, palettes, paletteIndex });
+}
+
+function openTextColor(anchor) {
+  textBarPaletteCycle = true;
+  lastTextColor = null;
+  palette.update({ color: textFormatState().color, palettes, paletteIndex });
+  openOnly(palettePopover);
+  palettePopover.open(anchor, {
+    onDismiss: () => {
+      textBarPaletteCycle = false;
+      lastTextColor = null;
+    },
+  });
+}
+
+function positionNoteTitle() {
+  if (!titleEl) return;
+  const title = workspace.current ? workspace.current.title : '';
+  titleEl.textContent = title || 'Untitled';
+  const rect = workspace.pages.length ? pageRect(workspace.pages, 0) : null;
+  if (!rect || screen !== 'editor') {
+    titleEl.hidden = true;
+    return;
+  }
+  const s = pageToScreen(rect.x, rect.y, viewport);
+  let top = Math.round(s.y - 36);
+  // "Fit page" leaves only a small margin above page 1, so a title sitting
+  // strictly above it would be clipped. Keep it in that margin while the page
+  // top is on screen; once the page scrolls away the title scrolls with it.
+  if (s.y >= 0 && top < 2) top = 2;
+  titleEl.style.left = `${Math.round(s.x)}px`;
+  titleEl.style.top = `${top}px`;
+  titleEl.style.width = `${Math.max(80, Math.round(rect.w * viewport.zoom))}px`;
+  titleEl.hidden = false;
+}
+
+function openNoteTitlePrompt() {
+  openTextPrompt({
+    title: 'Note name',
+    value: workspace.current ? workspace.current.title : '',
+    placeholder: 'Untitled',
+    onSubmit: (text) => {
+      workspace.renameNote(text);
+      syncUI();
+      positionNoteTitle();
+    },
+  });
+}
+
+function syncTextChrome() {
+  const visible =
+    screen === 'editor' &&
+    (getCurrentTool().kind === 'text' || selectedTextObjects().length > 0);
+  if (textBar) textBar.update({ ...textFormatState(), visible });
+  positionNoteTitle();
+}
+
+function positionTextChrome() {
+  if (textBar) textBar.reposition();
+  positionNoteTitle();
+}
+
+textBar = buildTextBar({ onPatch: applyTextPatch, onOpenColor: openTextColor });
+if (textBar.element) (editorEl || document.body).appendChild(textBar.element);
+
+if (editorEl && document.createElement) {
+  titleEl = document.createElement('button');
+  titleEl.type = 'button';
+  titleEl.className = 'note-title';
+  titleEl.setAttribute('aria-label', 'Rename this note');
+  titleEl.addEventListener('click', openNoteTitlePrompt);
+  editorEl.appendChild(titleEl);
+}
+
+palettePopover.el.addEventListener('click', interceptTextBarColor, true);
+palettePopover.el.addEventListener('input', interceptTextBarColor, true);
+
+syncTextChrome();
 
 // --- library screen --------------------------------------------------------
 const library = buildLibrary(libraryEl, {
@@ -1691,6 +1900,7 @@ function syncUI() {
   syncStrokePanel();
   updatePageChrome();
   syncPagesPanel();
+  syncTextChrome();
   if (palettePopover.isOpen()) {
     palette.update({ color: colorForTool(), palettes, paletteIndex });
   }

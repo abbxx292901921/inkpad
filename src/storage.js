@@ -231,6 +231,12 @@ export function toStrokeRecord(stroke) {
     record.h = stroke.h ?? 0;
     record.x = stroke.x ?? stroke.points?.[0]?.x ?? 0;
     record.y = stroke.y ?? stroke.points?.[0]?.y ?? 0;
+    record.family = stroke.family ?? 'sans';
+    record.bold = stroke.bold === true;
+    record.italic = stroke.italic === true;
+    record.underline = stroke.underline === true;
+    record.align = stroke.align ?? 'left';
+    record.list = stroke.list ?? 'none';
   }
   if (stroke.kind === 'shape') {
     record.kind = 'shape';
@@ -297,10 +303,21 @@ export function fromRecord(record) {
           img: null,
           loaded: false,
         })),
-        strokes: (page.strokes ?? []).map((stroke) => ({
-          ...stroke,
-          points: (stroke.points ?? []).map((p) => ({ ...p })),
-        })),
+        strokes: (page.strokes ?? []).map((stroke) => {
+          const out = {
+            ...stroke,
+            points: (stroke.points ?? []).map((p) => ({ ...p })),
+          };
+          if (stroke.kind === 'text') {
+            out.family = stroke.family ?? 'sans';
+            out.bold = stroke.bold === true;
+            out.italic = stroke.italic === true;
+            out.underline = stroke.underline === true;
+            out.align = stroke.align ?? 'left';
+            out.list = stroke.list ?? 'none';
+          }
+          return out;
+        }),
       };
       if (Number.isFinite(page.w) && page.w > 0) out.w = page.w;
       if (Number.isFinite(page.h) && page.h > 0) out.h = page.h;
