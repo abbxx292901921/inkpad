@@ -126,6 +126,48 @@
   color: var(--muted);
 }
 
+/* --- quick fill ------------------------------------------------------------ */
+/* One tap writes a whole provider into the form: a relay endpoint is long
+   and impossible to type on a phone. The key is never part of a template. */
+
+.set-templates {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-bottom: 4px;
+}
+
+.set-templates[hidden] {
+  display: none;
+}
+
+.set-template-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.set-template-chip {
+  min-height: 34px;
+  padding: 0 12px;
+  border: 1px solid var(--hairline);
+  border-radius: 999px;
+  background: var(--surface, rgba(0, 0, 0, 0.03));
+  color: var(--ink);
+  font: 600 13px/1 system-ui, -apple-system, "Segoe UI", sans-serif;
+  cursor: pointer;
+}
+
+.set-template-chip:active {
+  background: var(--accent-soft, rgba(10, 132, 255, 0.12));
+  border-color: var(--accent, #0a84ff);
+}
+
+.set-template-chip:focus-visible {
+  outline: 2px solid var(--accent, #0a84ff);
+  outline-offset: 1px;
+}
+
 .set-items {
   margin: 0;
   padding: 0 8px 16px;

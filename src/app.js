@@ -66,6 +66,7 @@ import {
   setActivePreset,
   getActivePresetId,
   getPreset,
+  providerTemplates,
 } from './ai/presets.js';
 import { callProvider, describeError } from './ai/client.js';
 import { annotationPrompt, parseAnnotations } from './ai/annotate.js';
@@ -1458,6 +1459,9 @@ function settingsAnchor() {
 }
 
 const settings = buildSettings({
+  // One tap fills a whole provider (including the long relay endpoints); the
+  // key is never part of a template.
+  templates: providerTemplates(),
   onSave: (preset, { isNew }) => {
     if (isNew) addPreset(preset);
     else updatePreset(preset.id, preset);

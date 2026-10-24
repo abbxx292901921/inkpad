@@ -132,6 +132,7 @@ function button(text, cls, onClick) {
 
 export function buildSettings({
   onClose, onTest, onFetchModels, onSave, onDelete, onSetActive,
+  templates: initialTemplates = [],
 } = {}) {
   // Import-safe: the module can be pulled into a Node test without a DOM.
   if (typeof document === 'undefined') {
@@ -143,6 +144,7 @@ export function buildSettings({
   let presets = [];
   let activeId = null;
   let kinds = DEFAULT_KINDS;
+  let templates = Array.isArray(initialTemplates) ? initialTemplates : [];
   let selectedId = null;
   let draft = null;
   let unsaved = false; // the draft has never been handed to the store
@@ -199,6 +201,65 @@ export function buildSettings({
     form.appendChild(wrap);
     return control;
   }
+
+  // --- quick fill ------------------------------------------------------------
+  // One tap writes a whole provider into the form: the endpoint (a relay URL
+  // is long and impossible to type on a phone), the models URL, the model
+  // name, the auth style and the vision flag. It NEVER touches the API key:
+  // the key is the user's, it is typed by them, and it stays on the device.
+  const templateBox = el('div', 'set-templates');
+  const templateChips = el('div', 'set-template-chips');
+  templateBox.appendChild(el('div', 'set-section-title', 'Quick fill'));
+  templateBox.appendChild(templateChips);
+
+  function paintTemplates() {
+    templateChips.textContent = '';
+    for (const t of templates) {
+      if (!t || typeof t !== 'object') continue;
+      const b = button(t.label || t.id || 'Template', 'set-template-chip', () => applyTemplate(t));
+      b.title = t.help || t.label || '';
+      b.setAttribute('aria-label', `Fill in ${t.label || t.id || 'a provider'}`);
+      templateChips.appendChild(b);
+    }
+    templateBox.hidden = templates.length === 0;
+  }
+
+  function applyTemplate(t) {
+    if (!t) return;
+    if (!draft) {
+      // No provider open yet: start one from the template.
+      draft = blankPreset();
+      unsaved = true;
+      selectedId = draft.id;
+    }
+    const info = kindInfo(t.kind);
+    labelInput.value = t.label || labelInput.value;
+    kindSelect.value = t.kind || kindSelect.value;
+    kindHelp.textContent = info ? info.help || '' : '';
+    endpointInput.value = t.endpoint ?? endpointInput.value;
+    modelsUrlInput.value = t.modelsUrl ?? modelsUrlInput.value;
+    modelInput.value = t.model ?? '';
+    authSelect.value = t.auth || 'bearer';
+    visionInput.checked = !!t.vision;
+    rawBox.hidden = (t.kind || draft.kind) !== 'raw';
+    showModelPicker(false);
+    // The draft follows the form, so the provider list shows the new name.
+    draft = {
+      ...draft,
+      label: labelInput.value.trim(),
+      kind: kindSelect.value,
+      endpoint: endpointInput.value.trim(),
+      modelsUrl: modelsUrlInput.value.trim(),
+      model: modelInput.value.trim(),
+      auth: authSelect.value,
+      vision: visionInput.checked,
+    };
+    renderList();
+    showResult(t.help ? `${t.help} Now add your key and save.` : 'Filled in. Add your key and save.', true);
+  }
+
+  paintTemplates();
+  form.appendChild(templateBox);
 
   const labelInput = field('Label', textInput('set-label'));
   const endpointInput = field('Endpoint', textInput('set-endpoint'), 'The base URL of the provider.');

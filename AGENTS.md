@@ -217,6 +217,15 @@ NEVER rotates between providers on its own, and never retries.
   the active id in `inkpad.presets.active`). Preset = `{ id, label, kind,
   endpoint, modelsUrl, apiKey, model, auth, extraHeaders, vision,
   requestTemplate, responseTextPath }`. Pure config, no runtime state.
+  `providerTemplates()` returns the one-tap TEMPLATES the settings sheet
+  offers ("Quick fill"): each one writes the endpoint, models URL, model,
+  auth style and vision flag into the form — and NEVER a key, which stays
+  in the preset the user types. The relay templates point at the user's own
+  "polyglot" Cloudflare Worker (`RELAY_HOST`): the worker's address in
+  front of the real host in the PATH
+  (`https://<worker>/integrate.api.nvidia.com/v1`), so a browser can reach
+  a provider that sends no CORS headers, the key stays in localStorage,
+  and switching provider is a new preset — never a worker edit.
 - `models.js` — best-effort model list fetch; failure is non-fatal (the user
   types the model name instead).
 - `annotate.js` — the AI annotation contract: `annotationPrompt()` asks for

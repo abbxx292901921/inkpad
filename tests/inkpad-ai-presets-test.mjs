@@ -89,8 +89,11 @@ eq('PRESETS_KEY is the documented key', P.PRESETS_KEY, 'inkpad.presets.v1');
 storage.clear();
 const defaults = P.defaultPresets();
 
-ok('defaultPresets returns the starter set', Array.isArray(defaults) && defaults.length === 7, `got ${defaults.length}`);
+ok('defaultPresets returns the starter set', Array.isArray(defaults) && defaults.length === 10, `got ${defaults.length}`);
 eq('the starter labels', defaults.map((p) => p.label), [
+  'NVIDIA NIM (relay)',
+  'NVIDIA NIM vision (relay)',
+  'Google Gemini (relay)',
   'Groq',
   'OpenRouter',
   'Google AI Studio',
@@ -103,12 +106,18 @@ eq('the starter kinds', defaults.map((p) => p.kind), [
   'openai',
   'openai',
   'gemini-generate',
+  'openai',
+  'openai',
+  'gemini-generate',
   'anthropic',
   'openai',
   'openai',
   'raw',
 ]);
 eq('the starter endpoints', defaults.map((p) => p.endpoint), [
+  'https://polyglot-relay.spoogboog5599.workers.dev/integrate.api.nvidia.com/v1',
+  'https://polyglot-relay.spoogboog5599.workers.dev/integrate.api.nvidia.com/v1',
+  'https://polyglot-relay.spoogboog5599.workers.dev/generativelanguage.googleapis.com/v1beta/models',
   'https://api.groq.com/openai/v1',
   'https://openrouter.ai/api/v1',
   'https://generativelanguage.googleapis.com/v1beta/models',
@@ -121,21 +130,30 @@ eq('the starter auth styles', defaults.map((p) => p.auth), [
   'bearer',
   'bearer',
   'x-goog-api-key',
+  'bearer',
+  'bearer',
+  'x-goog-api-key',
   'x-api-key',
   'none',
   'none',
   'bearer',
 ]);
 eq('the starter models', defaults.map((p) => p.model), [
+  'minimaxai/minimax-m3.1-flash',
+  'meta/llama-3.2-90b-vision-instruct',
+  'gemini-2.5-flash',
   'llama-3.3-70b-versatile',
-  'google/gemini-2.0-flash-exp:free',
-  'gemini-2.0-flash',
+  '',
+  'gemini-2.5-flash',
   'claude-sonnet-4-20250514',
   'llama3.2',
   'local-model',
   '',
 ]);
 eq('the model-list urls', defaults.map((p) => p.modelsUrl), [
+  'https://polyglot-relay.spoogboog5599.workers.dev/integrate.api.nvidia.com/v1/models',
+  'https://polyglot-relay.spoogboog5599.workers.dev/integrate.api.nvidia.com/v1/models',
+  'https://polyglot-relay.spoogboog5599.workers.dev/generativelanguage.googleapis.com/v1beta/models',
   'https://api.groq.com/openai/v1/models',
   'https://openrouter.ai/api/v1/models',
   'https://generativelanguage.googleapis.com/v1beta/models',
@@ -145,20 +163,59 @@ eq('the model-list urls', defaults.map((p) => p.modelsUrl), [
   '',
 ]);
 ok('every starter apiKey is empty', defaults.every((p) => p.apiKey === ''));
-eq('Groq takes images', defaults[0].vision, true);
-eq('OpenRouter takes images', defaults[1].vision, true);
-eq('Gemini takes images', defaults[2].vision, true);
-eq('Anthropic takes images', defaults[3].vision, true);
+eq('the NIM relay preset is text only', defaults[0].vision, false);
+eq('the NIM vision preset takes images', defaults[1].vision, true);
+eq('the Gemini relay preset takes images', defaults[2].vision, true);
+eq('Groq takes images', defaults[3].vision, true);
+eq('OpenRouter takes images', defaults[4].vision, true);
+eq('Gemini takes images', defaults[5].vision, true);
+eq('Anthropic takes images', defaults[6].vision, true);
 eq(
-  'every starter vision flag matches its kind supportsVision',
-  defaults.map((p) => p.vision),
-  defaults.map((p) => PR.describeKind(p.kind).supportsVision),
+  'every starter vision flag matches its kind supportsVision, except the text-only NIM one',
+  defaults.map((p, i) => (i === 0 ? true : p.vision === PR.describeKind(p.kind).supportsVision)),
+  defaults.map(() => true),
 );
-eq('the raw preset has no request template', defaults[6].requestTemplate, '');
-eq('the raw preset has no response path', defaults[6].responseTextPath, '');
+eq('the raw preset has no request template', defaults[9].requestTemplate, '');
+eq('the raw preset has no response path', defaults[9].responseTextPath, '');
 ok('every starter kind is a known kind', defaults.every((p) => P.PROVIDER_KINDS.includes(p.kind)));
 ok('every starter has a unique id', new Set(defaults.map((p) => p.id)).size === defaults.length);
 ok('defaultPresets returns a fresh array each call', P.defaultPresets() !== defaults);
+
+// --- the provider templates -------------------------------------------------
+// A template fills the settings form. It never carries a key.
+
+const templates = P.providerTemplates();
+ok('providerTemplates returns a list', Array.isArray(templates) && templates.length >= 6, `got ${templates.length}`);
+ok('every template has an id and a label', templates.every((t) => t.id && t.label));
+ok('every template has a known kind', templates.every((t) => P.PROVIDER_KINDS.includes(t.kind)));
+ok('no template carries an apiKey', templates.every((t) => t.apiKey === undefined));
+ok('every template has an endpoint', templates.every((t) => typeof t.endpoint === 'string' && t.endpoint.startsWith('https://')));
+ok('every template has a models url', templates.every((t) => typeof t.modelsUrl === 'string' && t.modelsUrl.startsWith('https://')));
+ok('every template has an auth style', templates.every((t) => typeof t.auth === 'string' && t.auth.length > 0));
+ok('every template id is unique', new Set(templates.map((t) => t.id)).size === templates.length);
+
+const nim = templates.find((t) => t.id === 'relay-nim');
+ok('the NIM template exists', !!nim);
+eq('the NIM template is the relay in front of NVIDIA', nim.endpoint, `https://${P.RELAY_HOST}/integrate.api.nvidia.com/v1`);
+eq('the NIM template model is the current one', nim.model, 'minimaxai/minimax-m3.1-flash');
+eq('the NIM template is bearer auth', nim.auth, 'bearer');
+eq('the NIM template is text only', nim.vision, false);
+ok('the NIM template points at NVIDIA through the relay', nim.endpoint.includes(`${P.RELAY_HOST}/integrate.api.nvidia.com`));
+
+const nimVision = templates.find((t) => t.id === 'relay-nim-vision');
+eq('the NIM vision template can read images', nimVision.vision, true);
+ok('the NIM vision template has a vision model', /vision/.test(nimVision.model));
+
+const gem = templates.find((t) => t.id === 'relay-gemini');
+eq('the Gemini template is the relay in front of Google', gem.endpoint, `https://${P.RELAY_HOST}/generativelanguage.googleapis.com/v1beta/models`);
+eq('the Gemini template uses the x-goog-api-key style', gem.auth, 'x-goog-api-key');
+
+ok('every relay template goes through the relay host', templates
+  .filter((t) => t.id.startsWith('relay-'))
+  .every((t) => t.endpoint.startsWith(`https://${P.RELAY_HOST}/`)));
+ok('every direct template goes straight to its provider', templates
+  .filter((t) => !t.id.startsWith('relay-'))
+  .every((t) => !t.endpoint.includes(P.RELAY_HOST)));
 
 // --- loadPresets: the fallback ---------------------------------------------
 

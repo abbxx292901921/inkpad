@@ -147,6 +147,21 @@ function starter(id, label, kind, endpoint, modelsUrl, model, auth, vision) {
   };
 }
 
+// --- the relay --------------------------------------------------------------
+//
+// The user's own Cloudflare relay ("polyglot"): a worker that forwards a
+// request to the host named in the PATH, so a browser can reach the
+// providers that send no CORS headers. The endpoint is the worker plus the
+// real host, and the app appends the rest (/chat/completions, the model
+// path), so a template only ever needs to name the worker once.
+//
+// The KEY STAYS IN THE APP (the preset's localStorage entry) and travels as
+// a normal Authorization header, which the relay forwards untouched. That is
+// the whole point of this arrangement: changing provider is a new preset,
+// never a worker edit.
+
+export const RELAY_HOST = 'polyglot-relay.spoogboog5599.workers.dev';
+
 // Free or cheap providers with their REAL endpoints and auth styles, so the
 // user only has to paste a key. `vision` mirrors the kind's supportsVision:
 // every OpenAI-compatible server CAN carry an image part, even when the
@@ -154,13 +169,28 @@ function starter(id, label, kind, endpoint, modelsUrl, model, auth, vision) {
 // and the settings sheet can turn it off per preset.
 export function defaultPresets() {
   return [
+    // The relay presets come first: they are the arrangement this app is
+    // actually used with (the key stays in localStorage, the worker only
+    // forwards).
+    starter('relay-nim', 'NVIDIA NIM (relay)', 'openai',
+      `https://${RELAY_HOST}/integrate.api.nvidia.com/v1`,
+      `https://${RELAY_HOST}/integrate.api.nvidia.com/v1/models`,
+      'minimaxai/minimax-m3.1-flash', 'bearer', false),
+    starter('relay-nim-vision', 'NVIDIA NIM vision (relay)', 'openai',
+      `https://${RELAY_HOST}/integrate.api.nvidia.com/v1`,
+      `https://${RELAY_HOST}/integrate.api.nvidia.com/v1/models`,
+      'meta/llama-3.2-90b-vision-instruct', 'bearer', true),
+    starter('relay-gemini', 'Google Gemini (relay)', 'gemini-generate',
+      `https://${RELAY_HOST}/generativelanguage.googleapis.com/v1beta/models`,
+      `https://${RELAY_HOST}/generativelanguage.googleapis.com/v1beta/models`,
+      'gemini-2.5-flash', 'x-goog-api-key', true),
     starter('groq', 'Groq', 'openai', 'https://api.groq.com/openai/v1',
       'https://api.groq.com/openai/v1/models', 'llama-3.3-70b-versatile', 'bearer', true),
     starter('openrouter', 'OpenRouter', 'openai', 'https://openrouter.ai/api/v1',
-      'https://openrouter.ai/api/v1/models', 'google/gemini-2.0-flash-exp:free', 'bearer', true),
+      'https://openrouter.ai/api/v1/models', '', 'bearer', true),
     starter('google-ai-studio', 'Google AI Studio', 'gemini-generate',
       'https://generativelanguage.googleapis.com/v1beta/models',
-      'https://generativelanguage.googleapis.com/v1beta/models', 'gemini-2.0-flash', 'x-goog-api-key', true),
+      'https://generativelanguage.googleapis.com/v1beta/models', 'gemini-2.5-flash', 'x-goog-api-key', true),
     starter('anthropic', 'Anthropic', 'anthropic', 'https://api.anthropic.com',
       'https://api.anthropic.com/v1/models', 'claude-sonnet-4-20250514', 'x-api-key', true),
     starter('ollama', 'Ollama (local)', 'openai', 'http://localhost:11434/v1',
@@ -168,6 +198,98 @@ export function defaultPresets() {
     starter('lm-studio', 'LM Studio (local)', 'openai', 'http://localhost:1234/v1',
       'http://localhost:1234/v1/models', 'local-model', 'none', true),
     starter('custom-raw', 'Custom (raw)', 'raw', '', '', '', 'bearer', false),
+  ];
+}
+
+// --- the provider templates -------------------------------------------------
+//
+// A template fills the settings form: kind, endpoint, models URL, model,
+// auth style and the vision flag. The KEY IS NEVER PART OF IT - the key
+// stays in the app's localStorage and is typed by the user.
+//
+// The relay templates put the worker's address in front of the real host, so
+// the provider's own URL never changes and a new provider is a new template
+// (or a new preset), never a worker edit.
+
+export function providerTemplates() {
+  return [
+    {
+      id: 'relay-nim',
+      label: 'NVIDIA NIM (relay)',
+      kind: 'openai',
+      endpoint: `https://${RELAY_HOST}/integrate.api.nvidia.com/v1`,
+      modelsUrl: `https://${RELAY_HOST}/integrate.api.nvidia.com/v1/models`,
+      model: 'minimaxai/minimax-m3.1-flash',
+      auth: 'bearer',
+      vision: false,
+      help: 'NVIDIA NIM through your relay. Text only.',
+    },
+    {
+      id: 'relay-nim-vision',
+      label: 'NVIDIA NIM vision (relay)',
+      kind: 'openai',
+      endpoint: `https://${RELAY_HOST}/integrate.api.nvidia.com/v1`,
+      modelsUrl: `https://${RELAY_HOST}/integrate.api.nvidia.com/v1/models`,
+      model: 'meta/llama-3.2-90b-vision-instruct',
+      auth: 'bearer',
+      vision: true,
+      help: 'NVIDIA NIM through your relay, with a model that can read images (Annotate).',
+    },
+    {
+      id: 'relay-gemini',
+      label: 'Google Gemini (relay)',
+      kind: 'gemini-generate',
+      endpoint: `https://${RELAY_HOST}/generativelanguage.googleapis.com/v1beta/models`,
+      modelsUrl: `https://${RELAY_HOST}/generativelanguage.googleapis.com/v1beta/models`,
+      model: 'gemini-2.5-flash',
+      auth: 'x-goog-api-key',
+      vision: true,
+      help: 'Google AI Studio through your relay. Reads images.',
+    },
+    {
+      id: 'groq',
+      label: 'Groq',
+      kind: 'openai',
+      endpoint: 'https://api.groq.com/openai/v1',
+      modelsUrl: 'https://api.groq.com/openai/v1/models',
+      model: 'llama-3.3-70b-versatile',
+      auth: 'bearer',
+      vision: true,
+      help: 'Groq direct - no relay, no worker.',
+    },
+    {
+      id: 'openrouter',
+      label: 'OpenRouter',
+      kind: 'openai',
+      endpoint: 'https://openrouter.ai/api/v1',
+      modelsUrl: 'https://openrouter.ai/api/v1/models',
+      model: '',
+      auth: 'bearer',
+      vision: true,
+      help: 'OpenRouter direct. Use Fetch models to pick one.',
+    },
+    {
+      id: 'google-ai-studio',
+      label: 'Google AI Studio',
+      kind: 'gemini-generate',
+      endpoint: 'https://generativelanguage.googleapis.com/v1beta/models',
+      modelsUrl: 'https://generativelanguage.googleapis.com/v1beta/models',
+      model: 'gemini-2.5-flash',
+      auth: 'x-goog-api-key',
+      vision: true,
+      help: 'Google AI Studio direct - no relay.',
+    },
+    {
+      id: 'anthropic',
+      label: 'Anthropic',
+      kind: 'anthropic',
+      endpoint: 'https://api.anthropic.com',
+      modelsUrl: 'https://api.anthropic.com/v1/models',
+      model: 'claude-sonnet-4-20250514',
+      auth: 'x-api-key',
+      vision: true,
+      help: 'Anthropic direct - no relay.',
+    },
   ];
 }
 
