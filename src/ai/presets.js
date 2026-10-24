@@ -175,11 +175,7 @@ export function defaultPresets() {
     starter('relay-nim', 'NVIDIA NIM (relay)', 'openai',
       `https://${RELAY_HOST}/integrate.api.nvidia.com/v1`,
       `https://${RELAY_HOST}/integrate.api.nvidia.com/v1/models`,
-      'minimaxai/minimax-m3.1-flash', 'bearer', false),
-    starter('relay-nim-vision', 'NVIDIA NIM vision (relay)', 'openai',
-      `https://${RELAY_HOST}/integrate.api.nvidia.com/v1`,
-      `https://${RELAY_HOST}/integrate.api.nvidia.com/v1/models`,
-      'meta/llama-3.2-90b-vision-instruct', 'bearer', true),
+      'minimaxai/minimax-m3.1-flash', 'bearer', true),
     starter('relay-gemini', 'Google Gemini (relay)', 'gemini-generate',
       `https://${RELAY_HOST}/generativelanguage.googleapis.com/v1beta/models`,
       `https://${RELAY_HOST}/generativelanguage.googleapis.com/v1beta/models`,
@@ -221,19 +217,11 @@ export function providerTemplates() {
       modelsUrl: `https://${RELAY_HOST}/integrate.api.nvidia.com/v1/models`,
       model: 'minimaxai/minimax-m3.1-flash',
       auth: 'bearer',
-      vision: false,
-      help: 'NVIDIA NIM through your relay. Text only.',
-    },
-    {
-      id: 'relay-nim-vision',
-      label: 'NVIDIA NIM vision (relay)',
-      kind: 'openai',
-      endpoint: `https://${RELAY_HOST}/integrate.api.nvidia.com/v1`,
-      modelsUrl: `https://${RELAY_HOST}/integrate.api.nvidia.com/v1/models`,
-      model: 'meta/llama-3.2-90b-vision-instruct',
-      auth: 'bearer',
+      // minimax-m3.1-flash reads images, so the one preset covers both Ask
+      // AI (text) and Annotate (a picture of the page). If a NIM model ever
+      // refuses an image part, the error is loud here and only here.
       vision: true,
-      help: 'NVIDIA NIM through your relay, with a model that can read images (Annotate).',
+      help: 'NVIDIA NIM through your relay. Reads images too, so Annotate works.',
     },
     {
       id: 'relay-gemini',
