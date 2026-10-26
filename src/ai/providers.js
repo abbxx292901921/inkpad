@@ -69,6 +69,16 @@ export function describeKind(kind) {
   return { kind, ...info };
 }
 
+// Which kinds can answer with a STREAM of text instead of one finished
+// reply. The wire shapes differ per family, but all three speak SSE
+// (server-sent events), so the client has one reader and three delta
+// extractors. 'raw' is the user's own endpoint with an unknown shape, and
+// the 'gemini-interactions' contract is unverified: both fall back to the
+// one-shot call.
+export function supportsStreaming(kind) {
+  return kind === 'openai' || kind === 'gemini-generate' || kind === 'anthropic';
+}
+
 // --- helpers ---------------------------------------------------------------
 
 function trimSlash(value) {
@@ -250,7 +260,7 @@ function buildOpenai(preset, payload) {
     attachImage(list, { type: 'image_url', image_url: { url: payload.image.dataUrl } });
   }
   const base = trimSlash(preset.endpoint).replace(/\/chat\/completions$/i, '');
-  return finish(preset, `${base}/chat/completions`, { model, messages: list, stream: false });
+  return finish(preset, `${base}/chat/completions`, { model, messages: list, stream: Boolean(payload.stream) });
 }
 
 function buildGemini(preset, payload, { interactions = false } = {}) {
@@ -271,7 +281,9 @@ function buildGemini(preset, payload, { interactions = false } = {}) {
   if (interactions) body.model = model;
   const url = interactions
     ? `${trimSlash(preset.endpoint).replace(/:[a-zA-Z]+$/, '')}/interactions`
-    : `${geminiBase(preset.endpoint, model)}:generateContent`;
+    : (payload.stream
+      ? `${geminiBase(preset.endpoint, model)}:streamGenerateContent?alt=sse`
+      : `${geminiBase(preset.endpoint, model)}:generateContent`);
   return finish(preset, url, body);
 }
 
@@ -288,6 +300,7 @@ function buildAnthropic(preset, payload) {
     attachImage(list, { type: 'image', source });
   }
   const body = { model, max_tokens: payload.maxTokens ?? 2048, messages: list };
+  if (payload.stream) body.stream = true;
   if (system) body.system = system;
   const base = trimSlash(preset.endpoint).replace(/\/v1\/messages$/i, '');
   return finish(preset, `${base}/v1/messages`, body, { 'anthropic-version': '2023-06-01' });

@@ -67,6 +67,55 @@ textarea,
   background: var(--table);
 }
 
+/* The AI chat sidebar is DOCKED, not floating: it takes the right edge and
+   the canvas shrinks beside it, so a page is never hidden under the panel
+   and the app stays usable while an answer streams in. */
+:root {
+  --ai-panel-w: 380px;
+  --ai-inset: 10px;
+}
+
+body.ai-open #paper,
+body.ai-open #page {
+  right: calc(var(--ai-panel-w) + var(--ai-inset));
+  /* A canvas is a REPLACED element: `width: auto` would resolve to its
+     backing-store width, not to the space the insets leave. So the width is
+     spelled out. */
+  width: calc(100% - var(--ai-panel-w) - var(--ai-inset));
+}
+
+/* The right-hand pill moves inboard so the sparkle button stays reachable. */
+body.ai-open .pill-right {
+  right: calc(var(--ai-panel-w) + var(--ai-inset));
+}
+
+body.ai-open .scrollbar {
+  right: calc(var(--ai-panel-w) + var(--ai-inset) + 4px);
+}
+
+/* On a narrow screen there is no room for a page and a chat side by side,
+   so the panel floats over the canvas instead and the canvas keeps its
+   size. */
+@media (max-width: 820px) {
+  :root {
+    --ai-panel-w: min(380px, calc(100vw - 20px));
+  }
+
+  body.ai-open #paper,
+  body.ai-open #page {
+    right: 0;
+    width: 100%;
+  }
+
+  body.ai-open .pill-right {
+    right: 0;
+  }
+
+  body.ai-open .scrollbar {
+    right: 4px;
+  }
+}
+
 /* Two stacked canvases: PAPER (sheets, ruling, imported layers) underneath,
    INK (transparent) on top. Keeping them apart is what lets the marker use
    'destination-over' without disappearing behind the white page. */

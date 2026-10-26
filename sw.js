@@ -18,7 +18,7 @@
 
 // Bump CACHE_NAME on every deploy: it is what tells the browser that the
 // old precache is stale and has to be rebuilt.
-const CACHE_NAME = 'inkpad-v7';
+const CACHE_NAME = 'inkpad-v8';
 const CACHE_PREFIX = 'inkpad-';
 const PRECACHE_BATCH = 6;
 

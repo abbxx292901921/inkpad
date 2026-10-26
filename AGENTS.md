@@ -98,7 +98,7 @@ Regenerate the service worker's precache list after adding a file:
   text formatting bar), `tool-menu.js` (the per-tool quick menu: colour and
   thickness presets behind a re-tap of the active pen/marker/pencil, or
   sizes for the eraser), `ruler.js` + `rotation-dial.js`,
-  `settings.js` (the AI providers sheet), `ask-ai.js` (the Ask AI panel),
+  `settings.js` (the AI providers sheet), `ask-ai.js` (the AI chat sidebar),
   `text-input.js` (the on-canvas text field), `prompt.js` (text and list
   prompts).
   UI-only CSS lives beside its module and is injected at runtime — there is no
@@ -114,7 +114,7 @@ Regenerate the service worker's precache list after adding a file:
 - `sw.js` — the service worker (classic script, at the repo root).
 - `tools/gen-precache.mjs` — regenerates the service worker's precache list.
 - `tests/` — the test suite. Plain Node scripts, no framework, no
-  dependencies: `node tests/run-all.mjs` runs all eighteen suites (1216 checks).
+  dependencies: `node tests/run-all.mjs` runs all twenty suites (1317 checks).
   Every suite prints `ALL N CHECKS PASSED` and exits non-zero on the first
   failure, so they work in CI as-is.
 - `design/notability-ui-spec.md` — the Notability UI rebuild spec, transcribed
@@ -232,7 +232,31 @@ NEVER rotates between providers on its own, and never retries.
   JSON on a 0-1000 grid, `parseAnnotations()` validates it (max 12,
   types rect/ellipse/arrow/callout, labels capped at 80 chars).
 - `src/ui/settings.js` — the provider settings sheet. `src/ui/ask-ai.js` — the
-  "Ask AI" panel (the sparkle button in the right pill).
+  AI chat sidebar (the sparkle button in the right pill).
+
+**The chat sidebar (a docked panel, not a popover).** `body.ai-open` shrinks
+the two canvases to the left of the panel (`#paper`/`#page` are REPLACED
+elements, so their width is spelled out — `width: auto` would resolve to the
+backing-store width), the right pill and the scrollbar move inboard, and
+`surface.resize()` re-lays the document out. Below 820px there is no room for
+both, so the panel floats over the canvas instead. The panel and the pages
+sidebar share the right edge and never stack.
+
+**Streaming.** `callProviderStream()` (in `src/ai/client.js`) asks the
+provider for a stream, reads the SSE feed and hands every fragment to
+`onDelta()`, so the answer appears while the model writes it. The three wire
+shapes are handled by `streamDelta()`: OpenAI (`choices[0].delta.content`),
+Anthropic (`content_block_delta` -> `delta.text`) and Gemini
+(`candidates[0].content.parts`). A provider that does not stream (the user's
+own `raw` endpoint, or a server that ignores the flag) answers with one JSON
+document and the client falls back to the one-shot path. The DOM is touched at
+most once per frame while a reply streams in.
+
+**Conversation memory.** Per note, in memory only (`chatHistory` in
+`src/app.js`, keyed by note id): the last 12 turns go into each request, the
+last 40 are kept, and "New chat" clears that note's turns. A reload starts
+fresh. The Annotate request is the exception — it gets a clean contract
+(system prompt + this question) and never the earlier turns.
 
 **AI annotations.** The Annotate button sends a JPEG of the page (or of the
 selection) plus a system prompt; the reply is parsed into page objects: rect
@@ -242,7 +266,6 @@ page's own `w/h`, so the same answer lands correctly on an A4 sheet and on a
 PDF page of a different aspect ratio. The whole batch is ONE history entry,
 so a single Undo removes it. A model that ignores the JSON contract yields
 zero objects and an error in the panel — never a half-applied batch.
-
 **CORS IS THE REAL LIMIT.** Most hosted provider APIs send no
 `Access-Control-Allow-Origin`, so a browser cannot call them with a key. The
 client turns that into an explicit `cors` error ("<Provider> blocks browser

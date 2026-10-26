@@ -44,7 +44,7 @@ import { rasterizePdf } from './pdf.js';
 import { createWorkspace } from './workspace.js';
 import { downloadPageAsPng, downloadNoteAsPng, printNote, pageRegionToDataUrl } from './export.js';
 import { registerServiceWorker } from './sw-register.js';
-import { buildAskAi } from './ui/ask-ai.js';
+import { buildChatPanel } from './ui/ask-ai.js';
 import { buildTextInput } from './ui/text-input.js';
 import { buildTextBar } from './ui/text-bar.js';
 import { buildShapeEditor } from './ui/shape-editor.js';
@@ -68,7 +68,7 @@ import {
   getPreset,
   providerTemplates,
 } from './ai/presets.js';
-import { callProvider, describeError } from './ai/client.js';
+import { callProvider, callProviderStream, describeError } from './ai/client.js';
 import { annotationPrompt, parseAnnotations } from './ai/annotate.js';
 import { fetchModels } from './ai/models.js';
 import { describeKind, PROVIDER_KINDS } from './ai/providers.js';
@@ -872,16 +872,22 @@ const toolbar = buildToolbar(toolbarEl, {
     toggleFingerDrawing();
     syncUI();
   },
-  onAskAi: (anchor) => {
-    // The Ask AI card is a popover too: opening it dismisses the colour,
-    // stroke and document cards, and closes the page sidebar, so nothing
-    // stacks on top of the answer.
-    for (const p of ALL_POPOVERS) p.close();
-    pagesPanel.close();
-    toolMenu.close();
-    syncAi();
-    askAiPopover.open(anchor);
-    askAi.focus();
+  onAskAi: () => {
+    // The AI chat is a docked sidebar, not a popover: it never covers the
+    // page, and the canvas shrinks beside it so the app stays usable while
+    // an answer streams in.
+    const open = !chatPanel.isOpen();
+    // The pages panel lives on the same edge: the two never stack.
+    if (open) {
+      pagesPanel.close();
+      for (const p of ALL_POPOVERS) p.close();
+      toolMenu.close();
+    }
+    setChatOpen(open);
+    if (open) {
+      syncAi();
+      chatPanel.focus();
+    }
   },
   onOpenPages: () => togglePagesPanel(),
   onOpenMore: (anchor) => {
@@ -1074,10 +1080,11 @@ function togglePagesPanel() {
   // One layer of chrome at a time: the panel is a sheet, not a popover, but
   // it still has to dismiss anything floating over the canvas.
   for (const p of ALL_POPOVERS) p.close();
-  askAiPopover.close();
   selectMenu.close();
   shapeMenu.close();
   toolMenu.close();
+  // The chat sidebar lives on the same edge, so the two never stack.
+  if (chatPanel.isOpen()) setChatOpen(false);
   syncPagesPanel();
   pagesPanel.open();
 }
@@ -1493,19 +1500,40 @@ const settings = buildSettings({
 });
 document.body.appendChild(settings.element);
 
-const askAi = buildAskAi({
-  onSubmit: (question, options) => sendToAi(question, options),
-  onClose: () => askAiPopover.close(),
+const chatPanel = buildChatPanel({
+  onSend: (question, options) => sendToAi(question, options),
+  onStop: () => stopAi(),
+  onClose: () => setChatOpen(false),
   onOpenSettings: () => {
-    askAiPopover.close();
     refreshSettings();
     settings.open(settingsAnchor());
   },
 });
-const askAiPopover = createPopover({ className: 'pop-ai', label: 'Ask AI' });
-askAiPopover.el.appendChild(askAi.el);
+chatPanel.onClear(() => {
+  // "New chat" forgets the turns of THIS note only.
+  const id = chatKey();
+  if (id) chatHistory.delete(id);
+});
+document.body.appendChild(chatPanel.element);
 
-let aiState = { ready: false, busy: false, answer: '', error: '' };
+let aiState = { ready: false, providerLabel: 'No provider', canSendImage: false, hasSelection: false };
+
+// The conversation, per note, for as long as the app stays open. It is
+// memory only: a reload starts a fresh chat.
+const chatHistory = new Map();
+const CHAT_MAX_TURNS = 12;
+const CHAT_MAX_STORED = 40;
+
+function chatKey() {
+  return workspace.current?.id || null;
+}
+
+function chatTurns() {
+  const id = chatKey();
+  if (!id) return [];
+  if (!chatHistory.has(id)) chatHistory.set(id, []);
+  return chatHistory.get(id);
+}
 
 function activePreset() {
   const id = getActivePresetId();
@@ -1531,7 +1559,18 @@ function syncAi() {
     canSendImage: preset ? preset.vision !== false : false,
     hasSelection: selected.length > 0,
   };
-  askAi.update(aiState);
+  chatPanel.setState(aiState);
+}
+
+// The sidebar is DOCKED: the canvas shrinks beside it, so the page is never
+// covered and the app stays usable while an answer streams in.
+function setChatOpen(open) {
+  const next = Boolean(open);
+  if (next) chatPanel.open();
+  else chatPanel.close();
+  document.body.classList.toggle('ai-open', next);
+  // The canvas just changed size, so it has to be re-laid out.
+  surface.resize();
 }
 
 // The FULL page as a JPEG. Annotations come back on a page-normalized grid,
@@ -1611,21 +1650,60 @@ function applyAiAnnotations(page, annotations) {
   return added.length;
 }
 
-async function sendToAi(question, { annotate = false } = {}) {
+// The request that is currently in flight, so the Stop button can abort it.
+let aiAbort = null;
+
+// The answer is painted into the log as it arrives. Streaming can fire many
+// times a second, so the DOM is touched at most once per frame.
+function makeStreamWriter(entry) {
+  let pending = '';
+  let frame = 0;
+  const flush = () => {
+    frame = 0;
+    if (!pending) return;
+    const text = pending;
+    pending = '';
+    chatPanel.updateAssistant(entry, text, { streaming: true });
+  };
+  return (text) => {
+    pending = text;
+    if (frame) return;
+    const raf = typeof requestAnimationFrame === 'function' ? requestAnimationFrame : null;
+    if (raf) frame = raf(flush);
+    else flush();
+  };
+}
+
+function stopAi() {
+  if (aiAbort) aiAbort.abort();
+}
+
+async function sendToAi(question, { annotate = false, attachPage = true } = {}) {
   const preset = activePreset();
   if (!preset) {
     syncAi();
-    askAi.update({ ...aiState, error: 'Choose a provider first.' });
+    chatPanel.setError('Choose a provider first.');
     return;
   }
   syncAi();
-  askAi.update({ ...aiState, busy: true, error: '', answer: '', annotating: 0 });
+  chatPanel.setError('');
+
+  const turns = chatTurns();
+  turns.push({ role: 'user', content: question });
+  if (turns.length > CHAT_MAX_STORED) turns.splice(0, turns.length - CHAT_MAX_STORED);
+  chatPanel.addUser(question);
+
+  const entry = chatPanel.addAssistant();
+  chatPanel.setBusy(true);
+
+  const controller = typeof AbortController === 'function' ? new AbortController() : null;
+  aiAbort = controller;
+
   try {
-    const messages = annotate
-      ? [{ role: 'system', content: annotationPrompt() }, { role: 'user', content: question }]
-      : [{ role: 'user', content: question }];
+    // The image rides on the LAST user message, so it belongs to the
+    // question that was just asked.
     let image = null;
-    if (preset.vision !== false) {
+    if (preset.vision !== false && (annotate || attachPage)) {
       try {
         image = await pageImageForAi();
       } catch (err) {
@@ -1633,26 +1711,56 @@ async function sendToAi(question, { annotate = false } = {}) {
         image = null;
       }
     }
-    const res = await callProvider(preset, { messages, image, model: preset.model });
+
+    const history = turns.slice(-CHAT_MAX_TURNS).map((turn) => ({ role: turn.role, content: turn.content }));
+    // An annotation is a CONTRACT ("answer with JSON only"), so it gets its
+    // own clean request: the system prompt and this question, nothing else.
+    const messages = annotate
+      ? [{ role: 'system', content: annotationPrompt() }, { role: 'user', content: question }]
+      : history;
+
+    const write = makeStreamWriter(entry);
+    const res = await callProviderStream(
+      preset,
+      { messages, image, model: preset.model },
+      {
+        signal: controller ? controller.signal : undefined,
+        onDelta: (delta, text) => write(text),
+      },
+    );
+
+    const answer = res.text || '';
+    chatPanel.updateAssistant(entry, answer, { streaming: false });
+
     if (!annotate) {
-      aiState = { ...aiState, busy: false, answer: res.text || '', error: '', annotating: 0 };
+      turns.push({ role: 'assistant', content: answer });
+      if (turns.length > CHAT_MAX_STORED) turns.splice(0, turns.length - CHAT_MAX_STORED);
     } else {
-      const parsed = parseAnnotations(res.text);
+      const parsed = parseAnnotations(answer);
       if (!parsed.ok) {
-        aiState = { ...aiState, busy: false, answer: '', error: '', annotating: 0 };
-        toast('Could not read any annotations from that reply.');
+        chatPanel.addNotice('Could not read any annotations from that reply.', 'error');
       } else {
         const page = workspace.page;
         const added = page ? applyAiAnnotations(page, parsed.annotations) : 0;
-        aiState = { ...aiState, busy: false, answer: '', error: '', annotating: added };
-        if (added === 0) toast('That reply had no annotations to add.');
+        chatPanel.addNotice(
+          added > 0
+            ? `Added ${added} annotation${added === 1 ? '' : 's'} — undo removes them.`
+            : 'That reply had no annotations to add.',
+        );
       }
     }
   } catch (err) {
     console.warn('[inkpad] AI request failed', err);
-    aiState = { ...aiState, busy: false, answer: '', error: describeError(err), annotating: 0 };
+    if (err?.code === 'aborted' || err?.name === 'AbortError') {
+      chatPanel.addNotice('Stopped.');
+    } else {
+      chatPanel.failAssistant(entry, describeError(err));
+    }
+  } finally {
+    aiAbort = null;
+    chatPanel.setBusy(false);
+    syncAi();
   }
-  syncAi();
 }
 
 // --- shape editor ----------------------------------------------------------
